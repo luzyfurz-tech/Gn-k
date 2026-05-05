@@ -47,10 +47,13 @@ echo ""
 
 echo "=================================="
 echo " Setup Complete!"
-echo " You can now start the server with: npm start"
 echo ""
-echo " Note: if you want to run this setup script later, make sure it is executable:"
-echo " chmod +x setup.sh"
+echo "[!] TO RE-DEPLOY:"
+echo "1. Pull the latest changes to your Pi."
+echo "2. Run this updated script: chmod +x setup.sh && ./setup.sh"
+echo ""
+echo " Note: if you encounter 'node-gyp' errors, run:"
+echo " sudo apt-get update && sudo apt-get install -y python3 make g++ build-essential"
 echo "=================================="
 
 # Ask to start automatically

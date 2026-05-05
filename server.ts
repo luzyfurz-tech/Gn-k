@@ -174,6 +174,33 @@ async function startServer() {
   });
 
   // Ollama
+  app.post("/api/settings/test", async (req, res) => {
+    const { provider, apiKey, host, model } = req.body;
+    
+    try {
+        if (provider === "gemini") {
+            const { GoogleGenerativeAI } = await import("@google/generative-ai");
+            if (!process.env.GEMINI_API_KEY) return res.status(400).json({ error: "Server missing GEMINI_API_KEY" });
+            const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+            const geminiModel = genAI.getGenerativeModel({ model: model || "gemini-1.5-flash" });
+            await geminiModel.generateContent("ping");
+            return res.json({ success: true, message: "Gemini connection verified" });
+        } else {
+            const { Ollama } = await import("ollama");
+            const ollama = new Ollama({ host: host || "https://ollama.com", headers: { Authorization: `Bearer ${apiKey}` } });
+            // For testing we just list tags or try a tiny prompt
+            await ollama.list(); 
+            return res.json({ success: true, message: "Ollama Cloud connection verified" });
+        }
+    } catch (err) {
+        console.error("[SETTINGS] Connection test failed:", err);
+        return res.status(500).json({ 
+            error: err instanceof Error ? err.message : "Connection failed",
+            details: "Ensure your API key is valid and the host is reachable."
+        });
+    }
+  });
+
   app.get("/api/models", async (req, res) => {
     const authHeader = req.headers.authorization;
     if (!authHeader) return res.status(401).json({ error: "Missing API key" });

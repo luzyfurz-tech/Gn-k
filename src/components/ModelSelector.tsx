@@ -34,12 +34,21 @@ export default function ModelSelector({ type, onSelect }: { type: 'agent' | 'bui
       if (res.status === 401) throw new Error("Invalid API key — check Settings");
       if (!res.ok) throw new Error("Failed to fetch models");
       const data = await res.json();
-      setModels(data);
-      if (data.length > 0 && !selectedModel) {
-        handleSelect(data[0].name);
+      
+      const combinedModels = data.length > 0 ? data : [
+        { name: "llama3" },
+        { name: "mistral" },
+        { name: "codellama" }
+      ];
+      
+      setModels(combinedModels);
+      if (combinedModels.length > 0 && !selectedModel) {
+        handleSelect(combinedModels[0].name);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load models");
+      // Fallback for UI even on error
+      setModels([{ name: "llama3" }, { name: "mistral" }]);
     } finally {
       setLoading(false);
     }

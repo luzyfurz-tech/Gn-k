@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Eye, EyeOff, ExternalLink, Check, X } from "lucide-react";
+import { Eye, EyeOff, ExternalLink, Check, X, CheckCircle, AlertCircle, Loader2, Terminal as TerminalIcon } from "lucide-react";
 
 export default function Settings() {
   const [apiKey, setApiKey] = useState(localStorage.getItem("ollama_api_key") || "");
@@ -30,6 +30,33 @@ export default function Settings() {
       .then(res => res.json())
       .then(data => setPrompt(data.prompt));
   }, []);
+
+  const handleTestConnection = async () => {
+    setTestStatus("loading");
+    setErrorMsg("");
+    try {
+        const response = await fetch("/api/settings/test", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ 
+                provider, 
+                apiKey, 
+                host: host || "https://ollama.com"
+            })
+        });
+        const data = await response.json();
+        if (data.success) {
+            setTestStatus("success");
+            setTimeout(() => setTestStatus("idle"), 3000);
+        } else {
+            setTestStatus("error");
+            setErrorMsg(data.error || "Unknown error");
+        }
+    } catch (err) {
+        setTestStatus("error");
+        setErrorMsg("Network failure between browser and server.");
+    }
+  };
 
   const handleSave = () => {
     localStorage.setItem("ollama_api_key", apiKey);
@@ -133,6 +160,29 @@ export default function Settings() {
                 &gt; SYSTEM: Using built-in Gemini AI engine. No separate API key required for preview mode.
             </div>
         )}
+
+        <div className="flex items-center gap-4 pt-2">
+            <button
+                onClick={handleTestConnection}
+                disabled={testStatus === 'loading'}
+                className="px-4 py-2 bg-black border border-green-700 text-green-700 rounded hover:bg-green-900/20 disabled:opacity-50 transition-all text-sm flex items-center gap-2"
+            >
+                {testStatus === 'loading' ? <Loader2 size={16} className="animate-spin" /> : <TerminalIcon size={16} />}
+                Test Connection
+            </button>
+            
+            {testStatus === 'success' && (
+                <div className="text-green-400 text-xs flex items-center gap-1 animate-in zoom-in">
+                    <CheckCircle size={14} /> Connection Verified
+                </div>
+            )}
+            
+            {testStatus === 'error' && (
+                <div className="text-red-500 text-xs flex items-center gap-1 animate-in shake">
+                    <AlertCircle size={14} /> {errorMsg}
+                </div>
+            )}
+        </div>
 
         <div className="space-y-2">
           <label className="block text-sm text-green-700">Master Agent Prompt</label>

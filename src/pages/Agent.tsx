@@ -23,7 +23,9 @@ export default function Agent() {
   }, [steps]);
 
   const startRun = async () => {
-    if (!goal || !selectedModel) return;
+    if (!goal) return;
+    const modelToUse = selectedModel || localStorage.getItem("agent_model") || (localStorage.getItem("ai_provider") === "gemini" ? "gemini-1.5-flash" : "llama3");
+    
     setIsRunning(true);
     setSteps([]);
     
@@ -41,7 +43,7 @@ export default function Agent() {
           "x-ollama-host": host,
           "x-ai-provider": provider
         },
-        body: JSON.stringify({ goal, model: selectedModel, elevated })
+        body: JSON.stringify({ goal, model: modelToUse, elevated })
       });
 
       if (!response.ok) {
