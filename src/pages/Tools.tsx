@@ -4,21 +4,39 @@ import { Wrench, Download, ShieldCheck, ShieldAlert, Play, Terminal } from "luci
 export default function Tools() {
   const [tools, setTools] = useState<any[]>([]);
 
+  const [isScanning, setIsScanning] = useState(false);
+
   const fetchTools = () => fetch("/api/tools").then(res => res.json()).then(setTools);
 
   useEffect(() => {
     fetchTools();
   }, []);
 
+  const scanSystem = async () => {
+    setIsScanning(true);
+    try {
+        await fetch("/api/tools/scan", { method: "POST" });
+        await fetchTools();
+    } finally {
+        setIsScanning(false);
+    }
+  };
+
   const installTool = async (name: string) => {
-    await fetch("/api/findings", { // Re-using findings or creating a generic log
-       method: "POST",
-       headers: { "Content-Type": "application/json" },
-       body: JSON.stringify({ title: `Tool Installation`, description: `User triggered install of ${name}`, service: "TOOL_MGR" })
-    });
-    // In a real app we'd have /api/tools/install
-    // For demo, we just refresh or handle locally
-    alert(`Initializing ${name}... System is downloading binaries.`);
+    try {
+      const response = await fetch("/api/tools/install", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name })
+      });
+      const data = await response.json();
+      if (data.success) {
+        fetchTools();
+      }
+    } catch (err) {
+      console.error("Installation failed", err);
+      alert("System failure during tool deployment.");
+    }
   };
 
   const handleRun = async (tool: string) => {
@@ -56,7 +74,16 @@ export default function Tools() {
         <h2 className="text-xl font-bold flex items-center gap-2">
           <Wrench className="text-green-400" /> Security Toolbag
         </h2>
-        <div className="text-[10px] text-green-700 italic">"Full modular arsenal available for deployment."</div>
+        <div className="flex items-center gap-4">
+            <button 
+                onClick={scanSystem}
+                disabled={isScanning}
+                className="text-[10px] bg-green-900/40 hover:bg-green-900/60 border border-green-900 text-green-400 px-3 py-1 rounded font-bold uppercase tracking-widest disabled:opacity-50 transition-all flex items-center gap-2"
+            >
+                {isScanning ? "Scanning..." : "Scan System"}
+            </button>
+            <div className="text-[10px] text-green-700 italic">"Full modular arsenal available for deployment."</div>
+        </div>
       </div>
 
       {Object.entries(groupedTools).map(([category, catTools]: [string, any]) => (

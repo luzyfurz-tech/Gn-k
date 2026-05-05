@@ -11,7 +11,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT || 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   // DB Setup
   const sqlite = new Database("opsec.db");
@@ -543,6 +543,48 @@ async function startServer() {
     res.json(result);
   });
 
+  app.post("/api/tools/install", async (req, res) => {
+    const { name } = req.body;
+    const { exec } = await import("child_process");
+    
+    // Simulate installation and check if binary exists
+    // In a real environment we might run: exec(`apt-get install -y ${name}`)
+    // For now, we'll verify if it's in path or just mark as installed in DB
+    
+    exec(`which ${name}`, (err, stdout) => {
+      const isActuallyInstalled = !err;
+      
+      sqlite.prepare("INSERT OR REPLACE INTO tools (id, name, installed, version) VALUES (?, ?, ?, ?)")
+        .run(name, name, 1, isActuallyInstalled ? "1.0.0-os" : "1.0.0-mock");
+
+      sqlite.prepare("INSERT INTO audit_logs (id, action, details, timestamp) VALUES (?, ?, ?, ?)")
+        .run(Math.random().toString(36).substring(2, 11), "TOOL_INSTALL", `Installed ${name} ${isActuallyInstalled ? '(System Binary Found)' : '(Mocked)'}`, Date.now());
+
+      res.json({ success: true, installed: true, status: isActuallyInstalled ? 'ready' : 'mocked' });
+    });
+  });
+
+  app.post("/api/tools/scan", async (req, res) => {
+    const { exec } = await import("child_process");
+    const results: string[] = [];
+    
+    for (const tool of DEFAULT_TOOLS) {
+        try {
+            await new Promise((resolve) => {
+                exec(`which ${tool.name}`, (err) => {
+                    if (!err) {
+                        sqlite.prepare("INSERT OR REPLACE INTO tools (id, name, installed, version) VALUES (?, ?, ?, ?)")
+                            .run(tool.name, tool.name, 1, "found");
+                        results.push(tool.name);
+                    }
+                    resolve(null);
+                });
+            });
+        } catch (e) {}
+    }
+    res.json({ found: results });
+  });
+
   // Findings
   app.get("/api/findings", (req, res) => {
     res.json(db.select().from(schema.findings).all());
@@ -706,22 +748,48 @@ async function startServer() {
 
   wss.on("connection", async (ws) => {
     const { spawn } = await import("child_process");
-    // Allocate a pseudo-terminal using python3's pty module
-    const shell = spawn("python3", ["-c", "import pty; pty.spawn('/bin/bash')"], {
-      env: { ...process.env, TERM: "xterm-256color" }
-    });
+    
+    let shell: any;
+    const setupEvents = (s: any) => {
+      s.stdout.on("data", (data: any) => ws.send(data.toString()));
+      s.stderr.on("data", (data: any) => ws.send(data.toString()));
+      s.on("close", () => ws.close());
+    };
 
-    shell.stdout.on("data", (data) => ws.send(data.toString()));
-    shell.stderr.on("data", (data) => ws.send(data.toString()));
-    shell.on("close", () => ws.close());
+    try {
+      // Allocate a pseudo-terminal using python3's pty module
+      shell = spawn("python3", ["-c", "import pty; pty.spawn('/bin/bash')"], {
+        env: { ...process.env, TERM: "xterm-256color" }
+      });
+      
+      shell.on("error", (err: any) => {
+        console.error("Shell spawn error, falling back to direct bash:", err);
+        shell = spawn("bash", ["-i"], {
+          env: { ...process.env, TERM: "xterm-256color" }
+        });
+        setupEvents(shell);
+      });
+      
+      setupEvents(shell);
 
-    ws.on("message", (msg) => {
-      shell.stdin.write(msg.toString());
-    });
+      ws.on("message", (msg) => {
+        if (shell && !shell.killed) {
+          try {
+            shell.stdin.write(msg.toString());
+          } catch (e) {
+            console.error("Stdin write error", e);
+          }
+        }
+      });
 
-    ws.on("close", () => {
-      shell.kill();
-    });
+      ws.on("close", () => {
+        if (shell && !shell.killed) shell.kill();
+      });
+    } catch (err) {
+      console.error("Critical shell failure", err);
+      ws.send("\r\n[SYSTEM] Failed to initialize shell session.\r\n");
+      ws.close();
+    }
   });
 }
 
