@@ -1,20 +1,32 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Send, Bot, Play, Square, Loader2, ChevronRight, ChevronDown, Terminal as TerminalIcon, FileText, Bug, Search, AlertCircle, CheckCircle, X } from "lucide-react";
+import { Send, Bot, Play, Square, Loader2, ChevronRight, ChevronDown, Terminal as TerminalIcon, FileText, Bug, Search, AlertCircle, CheckCircle, X, MessageSquare } from "lucide-react";
 import ModelSelector from "../components/ModelSelector";
 
 interface Step {
   id: string;
-  kind: 'plan' | 'tool_call' | 'tool_result' | 'ask' | 'done' | 'error';
+  kind: 'plan' | 'tool_call' | 'tool_result' | 'ask' | 'done' | 'error' | 'thought';
   payload: any;
   created_at: number;
 }
 
+// Global state to survive tab unmounts
+let globalSteps: Step[] = [];
+let globalIsRunning = false;
+let globalGoal = "";
+
 export default function Agent() {
-  const [goal, setGoal] = useState("");
-  const [isRunning, setIsRunning] = useState(false);
-  const [steps, setSteps] = useState<Step[]>([]);
+  const [goal, setGoal] = useState(globalGoal);
+  const [isRunning, setIsRunning] = useState(globalIsRunning);
+  const [steps, setSteps] = useState<Step[]>(globalSteps);
   const [selectedModel, setSelectedModel] = useState(localStorage.getItem("agent_model") || "");
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Sync state to globals
+  useEffect(() => {
+    globalSteps = steps;
+    globalIsRunning = isRunning;
+    globalGoal = goal;
+  }, [steps, isRunning, goal]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -22,12 +34,29 @@ export default function Agent() {
     }
   }, [steps]);
 
-  const startRun = async () => {
-    if (!goal) return;
+  useEffect(() => {
+    const qs = new URLSearchParams(window.location.search);
+    const initialGoal = qs.get("goal");
+    if (initialGoal && !globalIsRunning && globalGoal !== initialGoal) {
+      setGoal(initialGoal);
+      globalGoal = initialGoal;
+      // Let React update state, then start run
+      setTimeout(() => startRun(initialGoal), 100);
+      
+      // Clean up URL so it doesn't re-run on refresh
+      window.history.replaceState({}, '', '/');
+    }
+  }, []);
+
+  const startRun = async (overrideGoal?: string | React.MouseEvent) => {
+    const targetGoal = typeof overrideGoal === 'string' ? overrideGoal : goal;
+    if (!targetGoal) return;
     const modelToUse = selectedModel || localStorage.getItem("agent_model") || (localStorage.getItem("ai_provider") === "gemini" ? "gemini-1.5-flash" : "llama3");
     
     setIsRunning(true);
     setSteps([]);
+    globalSteps = [];
+    globalIsRunning = true;
     
     const apiKey = localStorage.getItem("ollama_api_key");
     const host = localStorage.getItem("ollama_host") || "https://ollama.com";
@@ -43,7 +72,7 @@ export default function Agent() {
           "x-ollama-host": host,
           "x-ai-provider": provider
         },
-        body: JSON.stringify({ goal, model: modelToUse, elevated })
+        body: JSON.stringify({ goal: targetGoal, model: modelToUse, elevated })
       });
 
       if (!response.ok) {
@@ -64,31 +93,43 @@ export default function Agent() {
           if (line.startsWith("data: ")) {
             try {
               const event = JSON.parse(line.replace("data: ", ""));
-              setSteps(prev => [...prev, {
-                id: Math.random().toString(36),
-                kind: event.type,
-                payload: event.data,
-                created_at: Date.now()
-              }]);
-              if (event.type === 'done' || event.type === 'error') setIsRunning(false);
+              setSteps(prev => {
+                const newSteps = [...prev, {
+                  id: Math.random().toString(36),
+                  kind: event.type,
+                  payload: event.data,
+                  created_at: Date.now()
+                }];
+                globalSteps = newSteps;
+                return newSteps;
+              });
+              if (event.type === 'done' || event.type === 'error') {
+                setIsRunning(false);
+                globalIsRunning = false;
+              }
             } catch (e) { console.error("Parse error", e); }
           }
         }
       }
     } catch (err) {
-        setSteps(prev => [...prev, {
+        setSteps(prev => {
+          const newSteps = [...prev, {
             id: Math.random().toString(36),
             kind: 'error',
             payload: { message: err instanceof Error ? err.message : "Connection failed" },
             created_at: Date.now()
-        }]);
+          }];
+          globalSteps = newSteps;
+          return newSteps;
+        });
         setIsRunning(false);
+        globalIsRunning = false;
     }
   };
 
   return (
-    <div className="flex flex-col h-full space-y-4">
-      <div className="flex justify-between items-center gap-4 border-b border-green-900 pb-4">
+    <div className="flex flex-col h-[calc(100vh-3rem)] space-y-4">
+      <div className="flex justify-between items-center gap-4 border-b border-green-900 pb-4 shrink-0">
         <div className="flex items-center gap-2 text-xl font-bold">
           <Bot className="text-green-400" /> Autonomous Agent
         </div>
@@ -116,7 +157,7 @@ export default function Agent() {
         )}
       </div>
 
-      <div className="bg-black/60 border border-green-900 p-4 rounded-lg shadow-2xl">
+      <div className="bg-black/60 border border-green-900 p-4 rounded-lg shadow-2xl shrink-0">
         <div className="flex gap-4">
           <textarea
             value={goal}
@@ -128,7 +169,7 @@ export default function Agent() {
           />
           <div className="flex flex-col gap-2">
             <button 
-              onClick={isRunning ? undefined : startRun}
+              onClick={isRunning ? undefined : () => startRun()}
               className={`p-4 rounded-full ${isRunning ? 'bg-green-900/20 text-green-900' : 'bg-green-500 text-black hover:bg-green-400'} transition-all shadow-[0_0_15px_rgba(34,197,94,0.3)]`}
             >
               {isRunning ? <Loader2 className="animate-spin" /> : <Play fill="currentColor" />}
@@ -146,11 +187,13 @@ export default function Agent() {
 }
 
 const StepItem: React.FC<{ step: Step, isLast: boolean }> = ({ step, isLast }) => {
-  const [isOpen, setIsOpen] = useState(true);
+  // Collapse reasoning/thought by default, expand tool_call and others
+  const [isOpen, setIsOpen] = useState(step.kind !== 'thought' && step.kind !== 'plan');
 
   const getIcon = () => {
     switch (step.kind) {
       case 'plan': return <Search size={16} className="text-blue-400" />;
+      case 'thought': return <MessageSquare size={16} className="text-gray-400" />;
       case 'tool_call': return <TerminalIcon size={16} className="text-yellow-400" />;
       case 'tool_result': return <FileText size={16} className="text-green-600" />;
       case 'done': return <CheckCircle size={16} className="text-green-500" />;
@@ -163,6 +206,7 @@ const StepItem: React.FC<{ step: Step, isLast: boolean }> = ({ step, isLast }) =
   const getLabel = () => {
     switch (step.kind) {
       case 'plan': return 'Next Steps';
+      case 'thought': return 'Reasoning';
       case 'tool_call': return `Running tool: ${step.payload.tool}`;
       case 'tool_result': return 'Tool Output';
       case 'done': return 'Goal Achieved';
@@ -195,9 +239,10 @@ const StepItem: React.FC<{ step: Step, isLast: boolean }> = ({ step, isLast }) =
         {isOpen && (
           <div className="p-3 border-t border-green-900/30 text-sm whitespace-pre-wrap font-mono">
             {step.kind === 'plan' && <p className="text-blue-200">{step.payload.text}</p>}
+            {step.kind === 'thought' && <p className="text-gray-300 opacity-80">{step.payload.text}</p>}
             {step.kind === 'tool_call' && (
               <div className="space-y-1">
-                <p className="text-yellow-100">$ {step.payload.command || step.payload.tool_name}</p>
+                <p className="text-yellow-100">$ {step.payload.command || step.payload.tool_name || JSON.stringify(step.payload)}</p>
                 <p className="text-xs text-green-900 font-sans italic">Awaiting completion...</p>
               </div>
             )}
@@ -205,10 +250,10 @@ const StepItem: React.FC<{ step: Step, isLast: boolean }> = ({ step, isLast }) =
               <div className="space-y-2">
                 <div className="text-[10px] text-green-700 font-sans flex justify-between">
                   <span>EXIT CODE: {step.payload.exitCode}</span>
-                  <span>DURATION: {step.payload.durationMs}ms</span>
+                  <span>DURATION: {step.payload.durationMs || 'N/A'}ms</span>
                 </div>
-                <div className="bg-black p-2 rounded border border-green-900/20 text-xs text-green-400 max-h-60 overflow-y-auto">
-                  {step.payload.stdout || step.payload.stderr || "No output."}
+                <div className="bg-black p-2 rounded border border-green-900/20 text-xs text-green-400 max-h-60 overflow-y-auto custom-scrollbar">
+                  {step.payload.stdout || step.payload.stderr || step.payload.content || JSON.stringify(step.payload.data || step.payload)}
                 </div>
               </div>
             )}
@@ -221,11 +266,6 @@ const StepItem: React.FC<{ step: Step, isLast: boolean }> = ({ step, isLast }) =
                 <div className="text-xs opacity-80 break-words">
                   {step.payload.message || "Unknown internal system failure."}
                 </div>
-                {step.payload.message?.includes("fetch") && (
-                  <div className="text-[10px] text-red-700 font-sans">
-                    Possible cause: The server cannot reach the AI host. If using a local IP, ensure the server has network access or try using a cloud-based endpoint.
-                  </div>
-                )}
               </div>
             )}
             {step.kind === 'ask' && (

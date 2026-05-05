@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { Wrench, Download, ShieldCheck, ShieldAlert, Play, Terminal } from "lucide-react";
+import { Wrench, Download, ShieldCheck, ShieldAlert, Play, Terminal, Bot } from "lucide-react";
+import { useLocation } from "wouter";
 
 export default function Tools() {
   const [tools, setTools] = useState<any[]>([]);
@@ -41,30 +42,18 @@ export default function Tools() {
     }
   };
 
+  const [, setLocation] = useLocation();
+
   const handleRun = async (tool: string) => {
-    const args = prompt(`Execute ${tool} with arguments:`, "-h");
+    const args = prompt(`Execute ${tool} with arguments (will run in Terminal):`, "-h");
     if (args === null) return;
+    setLocation(`/terminal?cmd=${encodeURIComponent(`${tool} ${args}`)}`);
+  };
 
-    const apiKey = localStorage.getItem("ollama_api_key");
-    const host = localStorage.getItem("ollama_host") || "https://ollama.com";
-    const provider = localStorage.getItem("ai_provider") || "ollama";
-    const goal = `RUN_TOOL: ${tool} ${args}. Output result to a scan record.`;
-
-    try {
-      await fetch("/api/agent/run", {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`,
-          "x-ollama-host": host,
-          "x-ai-provider": provider
-        },
-        body: JSON.stringify({ goal, model: "manual-tool-call" })
-      });
-      alert(`Instruction sent to Agent. Tracking process in Scans tab.`);
-    } catch (err) {
-      alert("Failed to reach agent supervisor.");
-    }
+  const handleAgentRun = async (tool: string) => {
+    const args = prompt(`Ask Agent to use ${tool} with arguments:`, "-h");
+    if (args === null) return;
+    setLocation(`/?goal=${encodeURIComponent(`RUN_TOOL: ${tool} ${args}. Output result to a scan record.`)}`);
   };
 
   const groupedTools = tools.reduce((acc: any, tool: any) => {
@@ -121,13 +110,16 @@ export default function Tools() {
                   {tool.installed ? (
                     <div className="flex gap-2">
                       <button 
-                        onClick={() => handleRun(tool.name)}
+                        onClick={() => handleAgentRun(tool.name)}
                         className="flex-1 bg-blue-900/40 hover:bg-blue-900/60 border border-blue-900 text-blue-100 text-[10px] uppercase font-bold py-1.5 rounded flex items-center justify-center gap-2 transition-all"
                       >
-                        <Play size={12} fill="currentColor" /> Run
+                        <Bot size={12} fill="currentColor" /> Agent
                       </button>
-                      <button className="flex-1 text-[10px] uppercase font-bold text-green-700 border border-green-900 py-1.5 rounded hover:bg-green-900/20">
-                        Terminal
+                      <button 
+                        onClick={() => handleRun(tool.name)}
+                        className="flex-1 text-[10px] uppercase font-bold text-green-700 border border-green-900 py-1.5 rounded hover:bg-green-900/20 flex items-center justify-center gap-2 transition-all"
+                      >
+                        <Terminal size={12} /> Terminal
                       </button>
                     </div>
                   ) : (

@@ -23,12 +23,16 @@ async function startServer() {
         
         INSTALLED SECURITY TOOLS: %TOOL_LIST%
         
-        INTERNAL TOOLS (via <tool_call>): shell, start_scan, read_scan, write_file, read_file, add_finding, http_request, ask, done.
+        INTERNAL TOOLS (via <tool_call>): shell, start_scan, read_scan, write_file, read_file, add_finding, http_request.
+        
+        You can reason before acting. Any text outside of tags is registered as your internal reasoning.
         
         LOOP CONTRACT: every turn you MUST emit:
-        - A brief <plan>...</plan> followed by exactly one <tool_call>{"tool": "name", ...}</tool_call>
-        - OR <ask>...</ask> if blocked
-        - OR <done>...</done> if finished.
+        - Exactly one <tool_call>{"tool": "name", ...}</tool_call>
+        - OR <ask>What is the password?</ask> if blocked/need human input
+        - OR <done>Mission Accomplished</done> if finished.
+        
+        If you generated code (e.g. web app, Python script), you should use the shell tool to run it (or build/launch a Docker container) before calling <done>.
         NEVER emit prose without an action.`;
 
   // Initialize DB
@@ -223,27 +227,27 @@ async function startServer() {
     const { command, timeout = 60 } = req.body;
     const { exec } = await import("child_process");
     
-    const child = exec(command, { timeout: timeout * 1000 }, (error, stdout, stderr) => {
-      res.json({
-        stdout,
-        stderr,
-        exitCode: error ? error.code : 0
+      const child = exec(command, { timeout: timeout * 1000 }, (error, stdout, stderr) => {
+        res.json({
+          stdout,
+          stderr,
+          exitCode: error ? error.code : 0
+        });
       });
     });
-  });
-
-  app.post("/api/agent/run", async (req, res) => {
-    const { model, goal, elevated } = req.body;
-    const authHeader = req.headers.authorization;
-    const provider = req.headers["x-ai-provider"]?.toString() || "ollama";
-    
-    if (provider === "ollama" && !authHeader) return res.status(401).json({ error: "Missing API key" });
-    
-    const apiKey = authHeader ? authHeader.replace("Bearer ", "") : "";
-    const host = req.headers["x-ollama-host"]?.toString() || "https://ollama.com";
-
-    let chatFn: (messages: any[]) => Promise<{ message: { content: string } }>;
-
+  
+    app.post("/api/agent/run", async (req, res) => {
+      const { model, goal, elevated } = req.body;
+      const authHeader = req.headers.authorization;
+      const provider = req.headers["x-ai-provider"]?.toString() || "ollama";
+      
+      if (provider === "ollama" && !authHeader) return res.status(401).json({ error: "Missing API key" });
+      
+      const apiKey = authHeader ? authHeader.replace("Bearer ", "") : "";
+      const host = req.headers["x-ollama-host"]?.toString() || "https://ollama.com";
+  
+      let chatFn: (messages: any[]) => Promise<{ message: { content: string } }>;
+  
     if (provider === "gemini") {
         try {
             const { GoogleGenerativeAI } = await import("@google/generative-ai");
@@ -416,6 +420,25 @@ async function startServer() {
         const toolMatch = content.match(/<tool_call>([\s\S]*?)<\/tool_call>/);
         const askMatch = content.match(/<ask>([\s\S]*?)<\/ask>/);
         const doneMatch = content.match(/<done>([\s\S]*?)<\/done>/);
+
+        const textOnly = content
+            .replace(/<plan>[\s\S]*?<\/plan>/g, '')
+            .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '')
+            .replace(/<ask>[\s\S]*?<\/ask>/g, '')
+            .replace(/<done>[\s\S]*?<\/done>/g, '')
+            .trim();
+
+        if (textOnly) {
+             sendEvent("thought", { text: textOnly });
+             db.insert(schema.agentSteps).values({
+               id: Math.random().toString(36).substring(2, 11),
+               runId,
+               idx: iteration,
+               kind: "thought",
+               payload: JSON.stringify({ text: textOnly }),
+               createdAt: Date.now()
+             }).run();
+        }
 
         if (planMatch) sendEvent("plan", { text: planMatch[1] });
 
@@ -645,23 +668,35 @@ async function startServer() {
       
       const { exec } = await import("child_process");
       
-      // Simulate installation and check if binary exists
-      exec(`which ${name}`, (err, stdout) => {
-        try {
-          const isActuallyInstalled = !err;
-          console.log(`[TOOLS] Installed result for ${name}: ${isActuallyInstalled ? 'SYSTEM' : 'MOCK'}`);
+      // Attempt actual system installation for Debian/Ubuntu/Raspbian
+      // We use DEBIAN_FRONTEND=noninteractive to avoid getting stuck on prompts
+      console.log(`[TOOLS] Attempting system installation for ${name}...`);
+      
+      exec(`sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ${name}`, (installErr, installStdout, installStderr) => {
+          if (installErr) {
+              console.warn(`[TOOLS] apt-get failed for ${name}, will mock. Errs:`, installStderr);
+          } else {
+              console.log(`[TOOLS] apt-get success for ${name}`);
+          }
           
-          sqlite.prepare("INSERT OR REPLACE INTO tools (id, name, installed, version) VALUES (?, ?, ?, ?)")
-            .run(name, name, 1, isActuallyInstalled ? "1.0.0-os" : "1.0.0-mock");
-
-          sqlite.prepare("INSERT INTO audit_logs (id, action, details, timestamp) VALUES (?, ?, ?, ?)")
-            .run(Math.random().toString(36).substring(2, 11), "TOOL_INSTALL", `Installed ${name} ${isActuallyInstalled ? '(System Binary Found)' : '(Mocked)'}`, Date.now());
-
-          res.json({ success: true, installed: true, status: isActuallyInstalled ? 'ready' : 'mocked' });
-        } catch (dbErr) {
-          console.error(`[TOOLS] Database error during tool install for ${name}:`, dbErr);
-          res.status(500).json({ error: "Database failure" });
-        }
+          // Verify if binary is available in PATH
+          exec(`which ${name}`, (err, stdout) => {
+            try {
+              const isActuallyInstalled = !err;
+              console.log(`[TOOLS] Installed result for ${name}: ${isActuallyInstalled ? 'SYSTEM' : 'MOCK'}`);
+              
+              sqlite.prepare("INSERT OR REPLACE INTO tools (id, name, installed, version) VALUES (?, ?, ?, ?)")
+                .run(name, name, 1, isActuallyInstalled ? "1.0.0-os" : "1.0.0-mock");
+    
+              sqlite.prepare("INSERT INTO audit_logs (id, action, details, timestamp) VALUES (?, ?, ?, ?)")
+                .run(Math.random().toString(36).substring(2, 11), "TOOL_INSTALL", `Installed ${name} ${isActuallyInstalled ? '(System Binary Found)' : '(Mocked)'}`, Date.now());
+    
+              res.json({ success: true, installed: true, status: isActuallyInstalled ? 'ready' : 'mocked' });
+            } catch (dbErr) {
+              console.error(`[TOOLS] Database error during tool install for ${name}:`, dbErr);
+              res.status(500).json({ error: "Database failure" });
+            }
+          });
       });
     } catch (err) {
       console.error("Critical error in tool install API:", err);

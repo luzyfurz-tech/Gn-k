@@ -32,6 +32,14 @@ export default function Terminal() {
     const ws = new WebSocket(`${protocol}//${window.location.host}/api/terminal/ws`);
     wsRef.current = ws;
 
+    ws.onopen = () => {
+      const qs = new URLSearchParams(window.location.search);
+      const initialCmd = qs.get("cmd");
+      if (initialCmd) {
+        ws.send(initialCmd + "\r");
+      }
+    };
+
     ws.onmessage = (event) => {
       term.write(event.data);
     };

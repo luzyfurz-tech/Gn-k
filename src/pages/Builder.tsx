@@ -8,6 +8,8 @@ export default function Builder() {
   const [prompt, setPrompt] = useState("");
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [selectedModel, setSelectedModel] = useState(localStorage.getItem("builder_model") || "");
+  const [filename, setFilename] = useState("script.py");
+  const [language, setLanguage] = useState("python");
 
   const handleChat = async () => {
     if (!prompt || !selectedModel) {
@@ -36,6 +38,7 @@ export default function Builder() {
         const decoder = new TextDecoder();
         
         setCode(""); // Clear editor
+        setPrompt(""); // Clear input
         
         while (true) {
             const { value, done } = await reader.read();
@@ -61,8 +64,22 @@ export default function Builder() {
     }
   };
 
+  const saveFile = async () => {
+    try {
+      const response = await fetch("/api/builder/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, filename })
+      });
+      if (response.ok) alert("Saved to sandbox directory!");
+      else alert("Failed to save.");
+    } catch (e) {
+      alert("Error saving file.");
+    }
+  };
+
   return (
-    <div className="flex h-full gap-4 overflow-hidden">
+    <div className="flex h-[calc(100vh-3rem)] gap-4 overflow-hidden">
       {/* AI Chat Pane */}
       <div className="w-80 flex flex-col border border-green-900 rounded bg-black/40 overflow-hidden">
         <div className="p-3 border-b border-green-900 bg-green-900/10 flex items-center justify-between">
@@ -74,7 +91,7 @@ export default function Builder() {
           </div>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs text-green-700 italic">
-          "Describe a script or tool you need. The Architect will generate the code directly into the editor."
+          "Describe a script or tool you need. The Architect will generate the code directly into the editor. Adjust language and filename before generating or saving."
         </div>
         <div className="p-3 border-t border-green-900 bg-black">
           <div className="flex gap-2">
@@ -82,6 +99,7 @@ export default function Builder() {
               value={prompt}
               onChange={e => setPrompt(e.target.value)}
               placeholder="Ask for code..."
+              onKeyDown={(e) => e.key === 'Enter' && handleChat()}
               className="flex-1 bg-green-900/10 border border-green-900 rounded p-2 text-xs text-green-100 focus:outline-none focus:border-green-500"
             />
             <button onClick={handleChat} className="bg-green-900 p-2 rounded hover:bg-green-800">
@@ -96,13 +114,35 @@ export default function Builder() {
         <div className="p-2 border-b border-green-900/30 flex items-center justify-between bg-black/40">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2 text-xs font-bold text-green-700">
-              <FileCode size={14} /> main.py
+              <FileCode size={14} /> 
+              <input 
+                type="text" 
+                value={filename} 
+                onChange={e => setFilename(e.target.value)} 
+                className="bg-transparent border-b border-green-900 text-green-500 focus:outline-none focus:border-green-400 w-32"
+              />
             </div>
-            <div className="flex items-center gap-1">
-              <button className="text-[10px] bg-green-900/20 px-2 py-0.5 rounded text-green-500 hover:bg-green-900/40 border border-green-900/50 flex items-center gap-1">
-                <Save size={10} /> Save
-              </button>
-            </div>
+            
+            <select 
+              value={language} 
+              onChange={e => setLanguage(e.target.value)}
+              className="bg-black border border-green-900 text-green-500 text-[10px] rounded focus:outline-none px-1"
+            >
+              <option value="python">Python</option>
+              <option value="html">HTML</option>
+              <option value="css">CSS</option>
+              <option value="javascript">JavaScript</option>
+              <option value="typescript">TypeScript</option>
+              <option value="shell">Shell</option>
+              <option value="sql">SQL</option>
+              <option value="dockerfile">Docker</option>
+              <option value="json">JSON</option>
+              <option value="markdown">Markdown</option>
+            </select>
+
+            <button onClick={saveFile} className="text-[10px] bg-green-900/20 px-2 py-0.5 rounded text-green-500 hover:bg-green-900/40 border border-green-900/50 flex items-center gap-1">
+              <Save size={10} /> Save
+            </button>
           </div>
           <button 
             onClick={() => setIsFullScreen(!isFullScreen)}
@@ -114,7 +154,7 @@ export default function Builder() {
         <div className="flex-1">
           <Editor
             height="100%"
-            defaultLanguage="python"
+            language={language}
             theme="vs-dark"
             value={code}
             onChange={(val) => setCode(val || "")}
