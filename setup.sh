@@ -42,7 +42,7 @@ echo ""
 echo "[!] NOTE FOR RASPBERRY PI / LINUX USERS:"
 echo "If you saw errors during 'npm install' related to 'node-gyp', 'better-sqlite3', or 'node-pty',"
 echo "you may need to install build tools first. If so, press Ctrl+C, run this, and try again:"
-echo "   sudo apt-get update && sudo apt-get install -y python3 make g++"
+echo "   sudo apt-get update && sudo apt-get install -y python3 make g++ build-essential"
 echo ""
 
 echo "=================================="

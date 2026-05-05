@@ -5,6 +5,7 @@ export default function Settings() {
   const [apiKey, setApiKey] = useState(localStorage.getItem("ollama_api_key") || "");
   const [showKey, setShowKey] = useState(false);
   const [host, setHost] = useState(localStorage.getItem("ollama_host") || "https://ollama.com");
+  const [provider, setProvider] = useState(localStorage.getItem("ai_provider") || "ollama");
   const [testStatus, setTestStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const [elevated, setElevated] = useState(localStorage.getItem("ai_elevated") === "true");
@@ -33,6 +34,7 @@ export default function Settings() {
   const handleSave = () => {
     localStorage.setItem("ollama_api_key", apiKey);
     localStorage.setItem("ollama_host", host);
+    localStorage.setItem("ai_provider", provider);
     localStorage.setItem("ai_elevated", elevated.toString());
     
     fetch("/api/settings/prompt", {
@@ -71,39 +73,66 @@ export default function Settings() {
   return (
     <div className="max-w-2xl space-y-8">
       <section className="space-y-4">
-        <h2 className="text-xl font-bold border-b border-green-900 pb-2">Ollama Cloud Configuration</h2>
+        <h2 className="text-xl font-bold border-b border-green-900 pb-2">AI Engine Configuration</h2>
         
-        <div className="space-y-2">
-          <label className="block text-sm text-green-700">Ollama Cloud API Key</label>
-          <div className="relative">
-            <input
-              type={showKey ? "text" : "password"}
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              className="w-full bg-black border border-green-900 p-2 rounded text-green-100 focus:outline-none focus:border-green-500 pr-10"
-              placeholder="ollama_..."
-            />
+        <div className="grid grid-cols-2 gap-4">
             <button 
-              onClick={() => setShowKey(!showKey)}
-              className="absolute right-2 top-2 text-green-700 hover:text-green-500"
+                onClick={() => setProvider("ollama")}
+                className={`p-4 rounded border ${provider === 'ollama' ? 'border-green-500 bg-green-500/10' : 'border-green-900 bg-black'} transition-all text-left space-y-1`}
             >
-              {showKey ? <EyeOff size={20} /> : <Eye size={20} />}
+                <div className="font-bold text-sm">Ollama Cloud / Local</div>
+                <div className="text-[10px] text-green-700 font-mono italic">"The hacker's choice. Run models anywhere."</div>
             </button>
-          </div>
-          <a href="https://ollama.com/settings/keys" target="_blank" rel="noreferrer" className="text-xs text-green-600 flex items-center gap-1 hover:underline">
-            Get a key <ExternalLink size={12} />
-          </a>
+            <button 
+                onClick={() => setProvider("gemini")}
+                className={`p-4 rounded border ${provider === 'gemini' ? 'border-green-500 bg-green-500/10' : 'border-green-900 bg-black'} transition-all text-left space-y-1`}
+            >
+                <div className="font-bold text-sm">Google Gemini</div>
+                <div className="text-[10px] text-green-700 font-mono italic">"Zero config. High intelligence. (Internal Key)"</div>
+            </button>
         </div>
 
-        <div className="space-y-2">
-          <label className="block text-sm text-green-700">Host Override (Advanced)</label>
-          <input
-            type="text"
-            value={host}
-            onChange={(e) => setHost(e.target.value)}
-            className="w-full bg-black border border-green-900 p-2 rounded text-green-100 focus:outline-none focus:border-green-500"
-          />
-        </div>
+        {provider === 'ollama' && (
+            <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                <div className="space-y-2">
+                    <label className="block text-sm text-green-700">Ollama Cloud API Key</label>
+                    <div className="relative">
+                        <input
+                        type={showKey ? "text" : "password"}
+                        value={apiKey}
+                        onChange={(e) => setApiKey(e.target.value)}
+                        className="w-full bg-black border border-green-900 p-2 rounded text-green-100 focus:outline-none focus:border-green-500 pr-10"
+                        placeholder="ollama_..."
+                        />
+                        <button 
+                        onClick={() => setShowKey(!showKey)}
+                        className="absolute right-2 top-2 text-green-700 hover:text-green-500"
+                        >
+                        {showKey ? <EyeOff size={20} /> : <Eye size={20} />}
+                        </button>
+                    </div>
+                    <a href="https://ollama.com/settings/keys" target="_blank" rel="noreferrer" className="text-xs text-green-600 flex items-center gap-1 hover:underline">
+                        Get a key <ExternalLink size={12} />
+                    </a>
+                </div>
+
+                <div className="space-y-2">
+                    <label className="block text-sm text-green-700">Host Override (Advanced)</label>
+                    <input
+                        type="text"
+                        value={host}
+                        onChange={(e) => setHost(e.target.value)}
+                        className="w-full bg-black border border-green-900 p-2 rounded text-green-100 focus:outline-none focus:border-green-500"
+                    />
+                </div>
+            </div>
+        )}
+
+        {provider === 'gemini' && (
+            <div className="p-4 border border-green-900 bg-green-900/10 rounded text-xs text-green-400 italic font-mono animate-in fade-in duration-300">
+                &gt; SYSTEM: Using built-in Gemini AI engine. No separate API key required for preview mode.
+            </div>
+        )}
 
         <div className="space-y-2">
           <label className="block text-sm text-green-700">Master Agent Prompt</label>

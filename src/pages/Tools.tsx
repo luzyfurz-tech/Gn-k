@@ -32,10 +32,12 @@ export default function Tools() {
       const data = await response.json();
       if (data.success) {
         fetchTools();
+      } else {
+        alert(`Deployment failed: ${data.error || 'Unknown error'}`);
       }
     } catch (err) {
       console.error("Installation failed", err);
-      alert("System failure during tool deployment.");
+      alert("System failure: Network or server error during deployment.");
     }
   };
 
@@ -44,6 +46,8 @@ export default function Tools() {
     if (args === null) return;
 
     const apiKey = localStorage.getItem("ollama_api_key");
+    const host = localStorage.getItem("ollama_host") || "https://ollama.com";
+    const provider = localStorage.getItem("ai_provider") || "ollama";
     const goal = `RUN_TOOL: ${tool} ${args}. Output result to a scan record.`;
 
     try {
@@ -51,7 +55,9 @@ export default function Tools() {
         method: "POST",
         headers: { 
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`
+          "Authorization": `Bearer ${apiKey}`,
+          "x-ollama-host": host,
+          "x-ai-provider": provider
         },
         body: JSON.stringify({ goal, model: "manual-tool-call" })
       });

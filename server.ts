@@ -208,12 +208,54 @@ async function startServer() {
   app.post("/api/agent/run", async (req, res) => {
     const { model, goal, elevated } = req.body;
     const authHeader = req.headers.authorization;
-    if (!authHeader) return res.status(401).json({ error: "Missing API key" });
-    const apiKey = authHeader.replace("Bearer ", "");
+    const provider = req.headers["x-ai-provider"]?.toString() || "ollama";
+    
+    if (provider === "ollama" && !authHeader) return res.status(401).json({ error: "Missing API key" });
+    
+    const apiKey = authHeader ? authHeader.replace("Bearer ", "") : "";
     const host = req.headers["x-ollama-host"]?.toString() || "https://ollama.com";
 
-    const { Ollama } = await import("ollama");
-    const ollama = new Ollama({ host, headers: { Authorization: `Bearer ${apiKey}` } });
+    let chatFn: (messages: any[]) => Promise<{ message: { content: string } }>;
+
+    if (provider === "gemini") {
+        try {
+            const { GoogleGenerativeAI } = await import("@google/generative-ai");
+            if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY not configured on server.");
+            const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+            const geminiModel = genAI.getGenerativeModel({ model: model.startsWith("gemini") ? model : "gemini-1.5-flash" });
+            
+            chatFn = async (msgs) => {
+                const history = msgs.slice(0, -1).map(m => ({
+                    role: m.role === "system" ? "user" : m.role === "assistant" ? "model" : "user",
+                    parts: [{ text: m.content }]
+                }));
+                const lastMsg = msgs[msgs.length - 1].content;
+                const chat = geminiModel.startChat({ history });
+                const result = await chat.sendMessage(lastMsg);
+                return { message: { content: result.response.text() } };
+            };
+        } catch (e) {
+            console.error("[AGENT] Gemini init failed, falling back to Ollama:", e);
+            const { Ollama } = await import("ollama");
+            const ollama = new Ollama({ host, headers: { Authorization: `Bearer ${apiKey}` } });
+            chatFn = async (msgs) => {
+                const response = await ollama.chat({ model, messages: msgs, stream: false });
+                return response;
+            };
+        }
+    } else {
+        const { Ollama } = await import("ollama");
+        const ollama = new Ollama({ host, headers: { Authorization: `Bearer ${apiKey}` } });
+        chatFn = async (msgs) => {
+            try {
+                const response = await ollama.chat({ model, messages: msgs, stream: false });
+                return response;
+            } catch (err) {
+                console.error("[AGENT] Ollama call failed:", err);
+                throw new Error(`Ollama Cloud Error: ${err instanceof Error ? err.message : "Connection failed"}`);
+            }
+        };
+    }
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -314,6 +356,8 @@ async function startServer() {
 
     try {
       let iteration = 0;
+      console.log(`[AGENT] Starting run ${runId} for goal: ${goal} using model: ${model}`);
+      
       const systemSettings = sqlite.prepare("SELECT value FROM system_settings WHERE key = 'agent_prompt'").get() as any;
       const basePrompt = systemSettings ? systemSettings.value : DEFAULT_SYSTEM_PROMPT;
 
@@ -335,7 +379,9 @@ async function startServer() {
 
       while (iteration < 25) {
         iteration++;
-        const response = await ollama.chat({ model, messages, stream: false });
+        console.log(`[AGENT] Iteration ${iteration}...`);
+        
+        const response = await chatFn(messages);
         const content = response.message.content;
         messages.push({ role: "assistant", content });
 
@@ -350,6 +396,7 @@ async function startServer() {
           let toolCall;
           try {
             toolCall = JSON.parse(toolMatch[1]);
+            console.log(`[AGENT] Tool call: ${toolCall.tool}`);
             sendEvent("tool_call", toolCall);
             
             const stepId = Math.random().toString(36).substring(2, 11);
@@ -379,13 +426,16 @@ async function startServer() {
 
             messages.push({ role: "user", content: `Tool result: ${JSON.stringify(result)}` });
           } catch (e) {
+            console.error(`[AGENT] Tool loop error:`, e);
             sendEvent("error", { message: "Tool loop error: " + (e instanceof Error ? e.message : "Unknown") });
             break;
           }
         } else if (askMatch) {
+          console.log(`[AGENT] Agent asked for input.`);
           sendEvent("ask", { text: askMatch[1] });
           break;
         } else if (doneMatch) {
+          console.log(`[AGENT] Agent finished goal.`);
           sendEvent("done", { summary: doneMatch[1] });
           db.update(schema.agentRuns).set({ 
             status: "done", 
@@ -395,12 +445,14 @@ async function startServer() {
           }).where(eq(schema.agentRuns.id, runId)).run();
           break;
         } else {
-          sendEvent("error", { message: "Model failed to emit a valid action tag." });
+          console.warn(`[AGENT] Model failed to emit action tag. Content: ${content.slice(0, 100)}...`);
+          sendEvent("error", { message: "Model failed to emit a valid action tag. Check logs." });
           break;
         }
       }
       res.end();
     } catch (err) {
+      console.error(`[AGENT] Fatal error:`, err);
       sendEvent("error", { message: err instanceof Error ? err.message : "Loop failed" });
       res.end();
     }
@@ -409,29 +461,43 @@ async function startServer() {
   app.post("/api/builder/chat", async (req, res) => {
     const { prompt, model } = req.body;
     const authHeader = req.headers.authorization;
-    if (!authHeader) return res.status(401).json({ error: "Missing API key" });
-    const apiKey = authHeader.replace("Bearer ", "");
+    const provider = req.headers["x-ai-provider"]?.toString() || "ollama";
+    
+    if (provider === "ollama" && !authHeader) return res.status(401).json({ error: "Missing API key" });
+    const apiKey = authHeader ? authHeader.replace("Bearer ", "") : "";
     const host = req.headers["x-ollama-host"]?.toString() || "https://ollama.com";
-
-    const { Ollama } = await import("ollama");
-    const ollama = new Ollama({ host, headers: { Authorization: `Bearer ${apiKey}` } });
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
     try {
-        const response = await ollama.chat({
-            model,
-            messages: [{ role: "user", content: `Generate clean, high-quality code for this request: ${prompt}. Only output the code, no markdown wrappers, no explanations.` }],
-            stream: true,
-        });
+        if (provider === "gemini") {
+            const { GoogleGenerativeAI } = await import("@google/generative-ai");
+            const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+            const geminiModel = genAI.getGenerativeModel({ model: model.startsWith("gemini") ? model : "gemini-1.5-flash" });
+            
+            const result = await geminiModel.generateContentStream(`Generate clean, high-quality code for this request: ${prompt}. Only output the code, no markdown wrappers, no explanations.`);
+            for await (const chunk of result.stream) {
+                res.write(`data: ${JSON.stringify(chunk.text())}\n\n`);
+            }
+        } else {
+            const { Ollama } = await import("ollama");
+            const ollama = new Ollama({ host, headers: { Authorization: `Bearer ${apiKey}` } });
+            
+            const response = await ollama.chat({
+                model,
+                messages: [{ role: "user", content: `Generate clean, high-quality code for this request: ${prompt}. Only output the code, no markdown wrappers, no explanations.` }],
+                stream: true,
+            });
 
-        for await (const chunk of response) {
-            res.write(`data: ${JSON.stringify(chunk.message.content)}\n\n`);
+            for await (const chunk of response) {
+                res.write(`data: ${JSON.stringify(chunk.message.content)}\n\n`);
+            }
         }
         res.end();
     } catch (err) {
+        console.error("[BUILDER] Error:", err);
         res.write(`data: ${JSON.stringify({ error: "Generation failed" })}\n\n`);
         res.end();
     }
@@ -544,45 +610,70 @@ async function startServer() {
   });
 
   app.post("/api/tools/install", async (req, res) => {
-    const { name } = req.body;
-    const { exec } = await import("child_process");
-    
-    // Simulate installation and check if binary exists
-    // In a real environment we might run: exec(`apt-get install -y ${name}`)
-    // For now, we'll verify if it's in path or just mark as installed in DB
-    
-    exec(`which ${name}`, (err, stdout) => {
-      const isActuallyInstalled = !err;
+    try {
+      const { name } = req.body;
+      if (!name) {
+          return res.status(400).json({ error: "Tool name is required" });
+      }
       
-      sqlite.prepare("INSERT OR REPLACE INTO tools (id, name, installed, version) VALUES (?, ?, ?, ?)")
-        .run(name, name, 1, isActuallyInstalled ? "1.0.0-os" : "1.0.0-mock");
+      const { exec } = await import("child_process");
+      
+      // Simulate installation and check if binary exists
+      exec(`which ${name}`, (err, stdout) => {
+        try {
+          const isActuallyInstalled = !err;
+          console.log(`[TOOLS] Installed result for ${name}: ${isActuallyInstalled ? 'SYSTEM' : 'MOCK'}`);
+          
+          sqlite.prepare("INSERT OR REPLACE INTO tools (id, name, installed, version) VALUES (?, ?, ?, ?)")
+            .run(name, name, 1, isActuallyInstalled ? "1.0.0-os" : "1.0.0-mock");
 
-      sqlite.prepare("INSERT INTO audit_logs (id, action, details, timestamp) VALUES (?, ?, ?, ?)")
-        .run(Math.random().toString(36).substring(2, 11), "TOOL_INSTALL", `Installed ${name} ${isActuallyInstalled ? '(System Binary Found)' : '(Mocked)'}`, Date.now());
+          sqlite.prepare("INSERT INTO audit_logs (id, action, details, timestamp) VALUES (?, ?, ?, ?)")
+            .run(Math.random().toString(36).substring(2, 11), "TOOL_INSTALL", `Installed ${name} ${isActuallyInstalled ? '(System Binary Found)' : '(Mocked)'}`, Date.now());
 
-      res.json({ success: true, installed: true, status: isActuallyInstalled ? 'ready' : 'mocked' });
-    });
+          res.json({ success: true, installed: true, status: isActuallyInstalled ? 'ready' : 'mocked' });
+        } catch (dbErr) {
+          console.error(`[TOOLS] Database error during tool install for ${name}:`, dbErr);
+          res.status(500).json({ error: "Database failure" });
+        }
+      });
+    } catch (err) {
+      console.error("Critical error in tool install API:", err);
+      res.status(500).json({ error: "System failure" });
+    }
   });
 
   app.post("/api/tools/scan", async (req, res) => {
-    const { exec } = await import("child_process");
-    const results: string[] = [];
-    
-    for (const tool of DEFAULT_TOOLS) {
-        try {
-            await new Promise((resolve) => {
-                exec(`which ${tool.name}`, (err) => {
-                    if (!err) {
-                        sqlite.prepare("INSERT OR REPLACE INTO tools (id, name, installed, version) VALUES (?, ?, ?, ?)")
-                            .run(tool.name, tool.name, 1, "found");
-                        results.push(tool.name);
-                    }
-                    resolve(null);
+    try {
+        const { exec } = await import("child_process");
+        const results: string[] = [];
+        
+        console.log("Starting tool scan...");
+        
+        for (const tool of DEFAULT_TOOLS) {
+            try {
+                await new Promise((resolve) => {
+                    exec(`which ${tool.name}`, (err) => {
+                        if (!err) {
+                            try {
+                                sqlite.prepare("INSERT OR REPLACE INTO tools (id, name, installed, version) VALUES (?, ?, ?, ?)")
+                                    .run(tool.name, tool.name, 1, "found");
+                                results.push(tool.name);
+                            } catch (dbErr) {
+                                console.error(`DB error during scan for ${tool.name}:`, dbErr);
+                            }
+                        }
+                        resolve(null);
+                    });
                 });
-            });
-        } catch (e) {}
+            } catch (e) {
+                console.error(`Exec error during scan for ${tool.name}:`, e);
+            }
+        }
+        res.json({ success: true, found: results });
+    } catch (err) {
+        console.error("Critical error in tools scan API:", err);
+        res.status(500).json({ error: "Scan failure" });
     }
-    res.json({ found: results });
   });
 
   // Findings

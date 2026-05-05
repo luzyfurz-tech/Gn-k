@@ -19,12 +19,14 @@ export default function Builder() {
     try {
         const apiKey = localStorage.getItem("ollama_api_key");
         const host = localStorage.getItem("ollama_host") || "https://ollama.com";
+        const provider = localStorage.getItem("ai_provider") || "ollama";
         const response = await fetch("/api/builder/chat", {
             method: "POST",
             headers: { 
                 "Content-Type": "application/json",
                 "Authorization": `Bearer ${apiKey}`,
-                "x-ollama-host": host
+                "x-ollama-host": host,
+                "x-ai-provider": provider
             },
             body: JSON.stringify({ prompt, model: selectedModel })
         });
@@ -43,8 +45,13 @@ export default function Builder() {
             for (const line of lines) {
                 if (line.startsWith("data: ")) {
                     try {
-                        const content = JSON.parse(line.replace("data: ", ""));
-                        setCode(prev => prev + content);
+                        const data = JSON.parse(line.replace("data: ", ""));
+                        if (typeof data === 'string') {
+                            setCode(prev => prev + data);
+                        } else if (data.error) {
+                            console.error("Agent error:", data.error);
+                            setCode(prev => prev + `\n# ERROR: ${data.error}\n`);
+                        }
                     } catch (e) { console.error("Parse error", e); }
                 }
             }

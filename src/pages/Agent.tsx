@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Send, Bot, Play, Square, Loader2, ChevronRight, ChevronDown, Terminal as TerminalIcon, FileText, Bug, Search } from "lucide-react";
+import { Send, Bot, Play, Square, Loader2, ChevronRight, ChevronDown, Terminal as TerminalIcon, FileText, Bug, Search, AlertCircle, CheckCircle, X } from "lucide-react";
 import ModelSelector from "../components/ModelSelector";
 
 interface Step {
@@ -29,41 +29,58 @@ export default function Agent() {
     
     const apiKey = localStorage.getItem("ollama_api_key");
     const host = localStorage.getItem("ollama_host") || "https://ollama.com";
+    const provider = localStorage.getItem("ai_provider") || "ollama";
     const elevated = localStorage.getItem("ai_elevated") === "true";
 
-    const response = await fetch("/api/agent/run", {
-      method: "POST",
-      headers: { 
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-        "x-ollama-host": host
-      },
-      body: JSON.stringify({ goal, model: selectedModel, elevated })
-    });
+    try {
+      const response = await fetch("/api/agent/run", {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+          "x-ollama-host": host,
+          "x-ai-provider": provider
+        },
+        body: JSON.stringify({ goal, model: selectedModel, elevated })
+      });
 
-    if (!response.body) return;
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
+      if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || `Server returned ${response.status}`);
+      }
 
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      const chunk = decoder.decode(value);
-      const lines = chunk.split("\n\n");
-      for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          try {
-            const event = JSON.parse(line.replace("data: ", ""));
-            setSteps(prev => [...prev, {
-              id: Math.random().toString(36),
-              kind: event.type,
-              payload: event.data,
-              created_at: Date.now()
-            }]);
-            if (event.type === 'done' || event.type === 'error') setIsRunning(false);
-          } catch (e) { console.error("Parse error", e); }
+      if (!response.body) return;
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value);
+        const lines = chunk.split("\n\n");
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const event = JSON.parse(line.replace("data: ", ""));
+              setSteps(prev => [...prev, {
+                id: Math.random().toString(36),
+                kind: event.type,
+                payload: event.data,
+                created_at: Date.now()
+              }]);
+              if (event.type === 'done' || event.type === 'error') setIsRunning(false);
+            } catch (e) { console.error("Parse error", e); }
+          }
         }
       }
+    } catch (err) {
+        setSteps(prev => [...prev, {
+            id: Math.random().toString(36),
+            kind: 'error',
+            payload: { message: err instanceof Error ? err.message : "Connection failed" },
+            created_at: Date.now()
+        }]);
+        setIsRunning(false);
     }
   };
 
@@ -194,6 +211,21 @@ const StepItem: React.FC<{ step: Step, isLast: boolean }> = ({ step, isLast }) =
               </div>
             )}
             {step.kind === 'done' && <div className="text-green-300 p-2 bg-green-900/20 rounded border border-green-500/30">{step.payload.summary}</div>}
+            {step.kind === 'error' && (
+              <div className="text-red-400 p-2 bg-red-900/10 rounded border border-red-900/30 flex flex-col gap-2">
+                <div className="font-bold flex items-center gap-2 italic">
+                  <X size={14} /> System Execution Halted
+                </div>
+                <div className="text-xs opacity-80 break-words">
+                  {step.payload.message || "Unknown internal system failure."}
+                </div>
+                {step.payload.message?.includes("fetch") && (
+                  <div className="text-[10px] text-red-700 font-sans">
+                    Possible cause: The server cannot reach the AI host. If using a local IP, ensure the server has network access or try using a cloud-based endpoint.
+                  </div>
+                )}
+              </div>
+            )}
             {step.kind === 'ask' && (
               <div className="space-y-3">
                 <p className="text-purple-300">{step.payload.text}</p>
@@ -210,21 +242,3 @@ const StepItem: React.FC<{ step: Step, isLast: boolean }> = ({ step, isLast }) =
   );
 }
 
-function CheckCircle({ size, className }: any) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-      <polyline points="22 4 12 14.01 9 11.01" />
-    </svg>
-  );
-}
-
-function AlertCircle({ size, className }: any) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <circle cx="12" cy="12" r="10" />
-      <line x1="12" y1="8" x2="12" y2="12" />
-      <line x1="12" y1="16" x2="12.01" y2="16" />
-    </svg>
-  );
-}
