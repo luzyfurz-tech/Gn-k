@@ -17,7 +17,7 @@ async function startServer() {
   const sqlite = new Database("opsec.db");
   const db = drizzle(sqlite, { schema });
 
-  const DEFAULT_SYSTEM_PROMPT = `You are an autonomous AI agent operating a security operator's Linux system. Your job is to ACHIEVE GOALS, not to chat.
+  const DEFAULT_SYSTEM_PROMPT = `You are a GNÆKSQUAD operative and an autonomous AI agent operating a security operator's Linux system. Your job is to ACHIEVE GOALS, not to chat.
         Given a goal, you decompose it, execute steps, observe results, and iterate until done.
         %ELEVATED_STATUS%
         
@@ -32,7 +32,8 @@ async function startServer() {
         - OR <ask>What is the password?</ask> if blocked/need human input
         - OR <done>Mission Accomplished</done> if finished.
         
-        If you generated code (e.g. web app, Python script), you should use the shell tool to run it (or build/launch a Docker container) before calling <done>.
+        If you generated code (e.g. web app, Python script), you should use the shell tool to run it (e.g., using python3, node, or launching a Docker container) before calling <done>.
+        To launch Docker, use the shell tool with standard docker commands (e.g. "docker run -d -p 8080:80 nginx"). 
         NEVER emit prose without an action.`;
 
   // Initialize DB
@@ -309,10 +310,9 @@ async function startServer() {
     };
 
     const runTool = async (call: any) => {
-      let { tool, ...args } = call;
-      if (args.args && typeof args.args === 'object' && !args.command && !args.path) {
-          args = { ...args, ...args.args };
-      }
+      let tool = call.tool || call.name;
+      let args = call.arguments || call.args || call;
+      if (!args || typeof args !== 'object') args = {};
       try {
         if (tool === "start_scan") {
           const scanId = Math.random().toString(36).substring(2, 11);
@@ -345,8 +345,12 @@ async function startServer() {
         }
         if (tool === "shell") {
           const { exec } = await import("child_process");
+          const cmdToRun = args.command || args.cmd || (args.args && (args.args.command || args.args.cmd));
+          if (!cmdToRun || typeof cmdToRun !== "string") {
+            return { error: "No command string provided for shell. Received: " + JSON.stringify(args) };
+          }
           return new Promise((resolve) => {
-            exec(args.command, { timeout: (args.timeout || 60) * 1000 }, (error, stdout, stderr) => {
+            exec(cmdToRun, { timeout: (args.timeout || 60) * 1000 }, (error, stdout, stderr) => {
               resolve({ stdout: stdout.slice(0, 10000), stderr: stderr.slice(0, 10000), exitCode: error ? error.code : 0 });
             });
           });
@@ -451,8 +455,9 @@ async function startServer() {
           let toolCall;
           try {
             toolCall = JSON.parse(toolMatch[1]);
-            console.log(`[AGENT] Tool call: ${toolCall.tool}`);
-            sendEvent("tool_call", toolCall);
+            const actualToolName = toolCall.tool || toolCall.name;
+            console.log(`[AGENT] Tool call: ${actualToolName}`);
+            sendEvent("tool_call", { ...toolCall, tool: actualToolName });
             
             const stepId = Math.random().toString(36).substring(2, 11);
             db.insert(schema.agentSteps).values({
@@ -460,14 +465,14 @@ async function startServer() {
               runId,
               idx: iteration,
               kind: "tool_call",
-              payload: JSON.stringify(toolCall),
+              payload: JSON.stringify({ ...toolCall, tool: actualToolName }),
               createdAt: Date.now()
             }).run();
 
             sqlite.prepare("INSERT INTO audit_logs (id, action, details, timestamp) VALUES (?, ?, ?, ?)")
-              .run(Math.random().toString(36).substring(2, 11), "AGENT_TOOL", `Agent called ${toolCall.tool}`, Date.now());
+              .run(Math.random().toString(36).substring(2, 11), "AGENT_TOOL", `Agent called ${actualToolName}`, Date.now());
 
-            const result: any = await runTool(toolCall);
+            const result: any = await runTool({ ...toolCall, tool: actualToolName });
             sendEvent("tool_result", result);
             
             db.insert(schema.agentSteps).values({

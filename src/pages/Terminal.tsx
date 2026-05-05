@@ -33,6 +33,25 @@ export default function Terminal() {
     wsRef.current = ws;
 
     ws.onopen = () => {
+      term.write('\x1b[32m   ____ _   _    ______ _  ______   ___  _   _   _    ____  \r\n');
+      term.write('  / ___| \\ | |  /  ____| |/ / ___| / _ \\| | | | / \\  |  _ \\ \r\n');
+      term.write(' | |  _|  \\| | / _  _| | \' /\\___ \\| | | | | | |/ _ \\ | | | |\r\n');
+      term.write(' | |_| | |\\  |/ __ |___| . \\ ___) | |_| | |_| / ___ \\| |_| |\r\n');
+      term.write('  \\____|_| \\_/_/ |_____|_|\\_\\____/ \\__\\_\\\\___/_/   \\_\\____/ \r\n\x1b[0m');
+      term.write('\x1b[37m                         Sir gnækalot was here\x1b[0m\r\n');
+      term.write('\x1b[38;5;208m  ____              ____              _             \r\n');
+      term.write(' |  _ \\  __ _ ___  | __ ) _   _ _ __ | | _____ _ __ \r\n');
+      term.write(' | | | |/ _` / __| |  _ \\| | | | \'_ \\| |/ / _ \\ \'__|\r\n');
+      term.write(' | |_| | (_| \\__ \\ | |_) | |_| | | | |   <  __/ |   \r\n');
+      term.write(' |____/ \\__,_|___/ |____/ \\__,_|_| |_|_|\\_\\___|_|   \r\n\x1b[0m\r\n');
+      term.write('\x1b[38;5;46m[+] SYSTEM BOOT SEQUENCE INITIATED...\r\n');
+      term.write('[+] ALLOCATING MEMORY SECTORS....................... [ OK ]\r\n');
+      term.write('[+] BYPASSING MAINFRAME FIREWALL.................... [ OK ]\r\n');
+      term.write('[+] DECRYPTING SECURE CHANNELS...................... [ OK ]\r\n');
+      term.write('[+] INJECTING PAYLOADS INTO VIRTUAL MEMORY.......... [ OK ]\r\n');
+      term.write('\x1b[38;5;196m[!] WARNING: UNAUTHORIZED ACCESS DETECTED & SUPPRESSED\x1b[38;5;46m\r\n');
+      term.write('[+] UPLINK ESTABLISHED. WELCOME TO THE GRID, OPERATOR.\x1b[0m\r\n\r\n');
+      
       const qs = new URLSearchParams(window.location.search);
       const initialCmd = qs.get("cmd");
       if (initialCmd) {
@@ -63,19 +82,25 @@ export default function Terminal() {
     };
   }, []);
 
-  const sendCommand = (cmd: string) => {
+  const sendCommand = (cmd: string, execute: boolean = false) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(cmd + "\r");
+      wsRef.current.send(cmd + (execute ? "\r" : ""));
     }
   };
 
   const SHORTCUTS = [
-    { label: "Network Sweep", cmd: "nmap -sn 192.168.1.0/24" },
-    { label: "Port Scan", cmd: "nmap -sV -T4 " },
-    { label: "Web Scan", cmd: "nikto -h http://localhost" },
-    { label: "Directory Brute", cmd: "gobuster dir -u http://localhost -w /usr/share/wordlists/dirb/common.txt" },
-    { label: "Process Monitor", cmd: "htop" },
-    { label: "Check Logs", cmd: "tail -f /var/log/syslog" },
+    { label: "Network Sweep Payload", cmd: "nmap -sn 192.168.1.0/24", exec: false },
+    { label: "Port Scan Payload", cmd: "nmap -sV -T4 ", exec: false },
+    { label: "Web Scan Payload", cmd: "nikto -h http://", exec: false },
+    { label: "Directory Brute Payload", cmd: "gobuster dir -u http://localhost -w /usr/share/wordlists/dirb/common.txt", exec: false },
+    { label: "Process Monitor", cmd: "top", exec: true },
+    { label: "Check System Logs", cmd: "dmesg | tail -n 20", exec: true },
+    { label: "System Info", cmd: "uname -a", exec: true },
+    { label: "Network Config", cmd: "ip addr", exec: true },
+    { label: "Active Connections", cmd: "ss -tulwn || netstat -tulwn", exec: true },
+    { label: "List Directory", cmd: "ls -la", exec: true },
+    { label: "Read Shadow File", cmd: "cat /etc/shadow", exec: true },
+    { label: "SSH Connect", cmd: "ssh user@10.0.0.1", exec: false },
   ];
 
   return (
@@ -96,7 +121,7 @@ export default function Terminal() {
             {SHORTCUTS.map(s => (
               <button 
                 key={s.label}
-                onClick={() => sendCommand(s.cmd)}
+                onClick={() => sendCommand(s.cmd, s.exec)}
                 className="text-left text-[10px] p-2 border border-green-900/30 rounded bg-green-900/5 hover:bg-green-900/20 text-green-500 hover:text-green-300 transition-colors truncate"
               >
                 {s.label}
