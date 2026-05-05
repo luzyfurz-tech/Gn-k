@@ -1,15 +1,23 @@
-import { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import Editor from "@monaco-editor/react";
-import { Code, Play, Save, Maximize2, Send, Bot, FileCode } from "lucide-react";
+import { Send, FileCode, Bot, Maximize2, Play, Code, Save } from "lucide-react";
 import ModelSelector from "../components/ModelSelector";
 
 export default function Builder() {
   const [code, setCode] = useState("// Start coding your exploit or utility script...");
   const [prompt, setPrompt] = useState("");
+  const [history, setHistory] = useState<{role: string, content: string}[]>([]);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [selectedModel, setSelectedModel] = useState(localStorage.getItem("builder_model") || "");
   const [filename, setFilename] = useState("script.py");
   const [language, setLanguage] = useState("python");
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [history]);
 
   const handleChat = async () => {
     if (!prompt || !selectedModel) {
@@ -17,7 +25,21 @@ export default function Builder() {
       return;
     }
     
-    // Logic for SSE builder chat
+    setHistory(prev => [...prev, { role: "user", content: prompt }]);
+    const currentPrompt = prompt;
+    setPrompt(""); // Clear input
+    setCode(""); // Clear editor
+    
+    // Auto-detect language
+    const lowerPrompt = currentPrompt.toLowerCase();
+    if (lowerPrompt.includes("html") || lowerPrompt.includes("website") || lowerPrompt.includes("web page")) {
+        setLanguage("html");
+        setFilename(prev => prev.endsWith('.py') ? 'index.html' : prev);
+    } else if (lowerPrompt.includes("bash") || lowerPrompt.includes("shell script")) {
+        setLanguage("shell");
+        setFilename(prev => prev.endsWith('.py') ? 'script.sh' : prev);
+    }
+
     try {
         const apiKey = localStorage.getItem("ollama_api_key");
         const host = localStorage.getItem("ollama_host") || "https://ollama.com";
@@ -30,15 +52,12 @@ export default function Builder() {
                 "x-ollama-host": host,
                 "x-ai-provider": provider
             },
-            body: JSON.stringify({ prompt, model: selectedModel })
+            body: JSON.stringify({ prompt: currentPrompt, model: selectedModel })
         });
         
         if (!response.body) return;
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
-        
-        setCode(""); // Clear editor
-        setPrompt(""); // Clear input
         
         while (true) {
             const { value, done } = await reader.read();
@@ -59,8 +78,10 @@ export default function Builder() {
                 }
             }
         }
+        setHistory(prev => [...prev, { role: "assistant", content: "Generated code in editor." }]);
     } catch (e) {
         console.error("Builder chat failed", e);
+        setHistory(prev => [...prev, { role: "assistant", content: "Failed to generate code." }]);
     }
   };
 
@@ -90,8 +111,18 @@ export default function Builder() {
             <ModelSelector type="builder" onSelect={setSelectedModel} />
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs text-green-700 italic">
-          "Describe a script or tool you need. The Architect will generate the code directly into the editor. Adjust language and filename before generating or saving."
+        <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={scrollRef}>
+          <div className="text-xs text-green-700 italic border-b border-green-900/30 pb-4">
+            "Describe a script or tool you need. The Architect will generate the code directly into the editor. Adjust language and filename before generating or saving."
+          </div>
+          
+          {history.map((msg, i) => (
+              <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                  <div className={`p-2 rounded text-xs max-w-[90%] ${msg.role === 'user' ? 'bg-green-900/20 border border-green-900 text-green-300' : 'text-green-500'}`}>
+                      {msg.content}
+                  </div>
+              </div>
+          ))}
         </div>
         <div className="p-3 border-t border-green-900 bg-black">
           <div className="flex gap-2">

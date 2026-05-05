@@ -13,20 +13,105 @@ interface Step {
 let globalSteps: Step[] = [];
 let globalIsRunning = false;
 let globalGoal = "";
+let listeners: (() => void)[] = [];
+
+const notify = () => listeners.forEach(l => l());
+
+const addStep = (stepOrUpdater: Step | ((prev: Step[]) => Step[])) => {
+  if (typeof stepOrUpdater === 'function') {
+    globalSteps = stepOrUpdater(globalSteps);
+  } else {
+    globalSteps = [...globalSteps, stepOrUpdater];
+  }
+  notify();
+};
+
+const setIsRunning = (val: boolean) => {
+  globalIsRunning = val;
+  notify();
+};
+
+const setGoal = (val: string) => {
+  globalGoal = val;
+  notify();
+};
+
+const performRun = async (targetGoal: string, modelToUse: string, elevated: boolean) => {
+  setIsRunning(true);
+  globalSteps = [];
+  notify();
+  
+  const apiKey = localStorage.getItem("ollama_api_key");
+  const host = localStorage.getItem("ollama_host") || "https://ollama.com";
+  const provider = localStorage.getItem("ai_provider") || "ollama";
+
+  try {
+    const response = await fetch("/api/agent/run", {
+      method: "POST",
+      headers: { 
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+        "x-ollama-host": host,
+        "x-ai-provider": provider
+      },
+      body: JSON.stringify({ goal: targetGoal, model: modelToUse, elevated })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Server returned ${response.status}`);
+    }
+
+    const reader = response.body?.pipeThrough(new TextDecoderStream()).getReader();
+    if (!reader) throw new Error("No reader");
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      
+      const lines = value.split("\n");
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          try {
+            const event = JSON.parse(line.replace("data: ", ""));
+            addStep({
+              id: Math.random().toString(36),
+              kind: event.type,
+              payload: event.data,
+              created_at: Date.now()
+            });
+            if (event.type === 'done' || event.type === 'error') {
+              setIsRunning(false);
+            }
+          } catch (e) { console.error("Parse error", e); }
+        }
+      }
+    }
+  } catch (err) {
+      addStep({
+          id: Math.random().toString(36),
+          kind: 'error',
+          payload: { message: err instanceof Error ? err.message : "Connection failed" },
+          created_at: Date.now()
+      });
+      setIsRunning(false);
+  }
+};
 
 export default function Agent() {
-  const [goal, setGoal] = useState(globalGoal);
-  const [isRunning, setIsRunning] = useState(globalIsRunning);
-  const [steps, setSteps] = useState<Step[]>(globalSteps);
-  const [selectedModel, setSelectedModel] = useState(localStorage.getItem("agent_model") || "");
+  const [, forceRender] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
+  
+  const goal = globalGoal;
+  const isRunning = globalIsRunning;
+  const steps = globalSteps;
 
-  // Sync state to globals
+  const [selectedModel, setSelectedModel] = useState(localStorage.getItem("agent_model") || "");
+
   useEffect(() => {
-    globalSteps = steps;
-    globalIsRunning = isRunning;
-    globalGoal = goal;
-  }, [steps, isRunning, goal]);
+    const l = () => forceRender(n => n + 1);
+    listeners.push(l);
+    return () => { listeners = listeners.filter(x => x !== l); };
+  }, []);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -52,79 +137,9 @@ export default function Agent() {
     const targetGoal = typeof overrideGoal === 'string' ? overrideGoal : goal;
     if (!targetGoal) return;
     const modelToUse = selectedModel || localStorage.getItem("agent_model") || (localStorage.getItem("ai_provider") === "gemini" ? "gemini-1.5-flash" : "llama3");
-    
-    setIsRunning(true);
-    setSteps([]);
-    globalSteps = [];
-    globalIsRunning = true;
-    
-    const apiKey = localStorage.getItem("ollama_api_key");
-    const host = localStorage.getItem("ollama_host") || "https://ollama.com";
-    const provider = localStorage.getItem("ai_provider") || "ollama";
     const elevated = localStorage.getItem("ai_elevated") === "true";
-
-    try {
-      const response = await fetch("/api/agent/run", {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`,
-          "x-ollama-host": host,
-          "x-ai-provider": provider
-        },
-        body: JSON.stringify({ goal: targetGoal, model: modelToUse, elevated })
-      });
-
-      if (!response.ok) {
-          const errData = await response.json().catch(() => ({}));
-          throw new Error(errData.error || `Server returned ${response.status}`);
-      }
-
-      if (!response.body) return;
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value);
-        const lines = chunk.split("\n\n");
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            try {
-              const event = JSON.parse(line.replace("data: ", ""));
-              setSteps(prev => {
-                const newSteps = [...prev, {
-                  id: Math.random().toString(36),
-                  kind: event.type,
-                  payload: event.data,
-                  created_at: Date.now()
-                }];
-                globalSteps = newSteps;
-                return newSteps;
-              });
-              if (event.type === 'done' || event.type === 'error') {
-                setIsRunning(false);
-                globalIsRunning = false;
-              }
-            } catch (e) { console.error("Parse error", e); }
-          }
-        }
-      }
-    } catch (err) {
-        setSteps(prev => {
-          const newSteps = [...prev, {
-            id: Math.random().toString(36),
-            kind: 'error',
-            payload: { message: err instanceof Error ? err.message : "Connection failed" },
-            created_at: Date.now()
-          }];
-          globalSteps = newSteps;
-          return newSteps;
-        });
-        setIsRunning(false);
-        globalIsRunning = false;
-    }
+    
+    performRun(targetGoal, modelToUse, elevated);
   };
 
   return (

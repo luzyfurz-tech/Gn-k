@@ -120,6 +120,8 @@ async function startServer() {
       duration_ms INTEGER
     );
   `);
+  
+  sqlite.prepare("DELETE FROM system_settings WHERE key = 'agent_prompt'").run();
 
   app.use(express.json());
 
@@ -307,7 +309,10 @@ async function startServer() {
     };
 
     const runTool = async (call: any) => {
-      const { tool, ...args } = call;
+      let { tool, ...args } = call;
+      if (args.args && typeof args.args === 'object' && !args.command && !args.path) {
+          args = { ...args, ...args.args };
+      }
       try {
         if (tool === "start_scan") {
           const scanId = Math.random().toString(36).substring(2, 11);
