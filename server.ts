@@ -2,6 +2,7 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
+import fs from "fs/promises";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { eq } from "drizzle-orm";
@@ -11,30 +12,60 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function startServer() {
   const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
+  const PORT = Number(process.env.PORT) || 1945;
 
   // DB Setup
   const sqlite = new Database("opsec.db");
   const db = drizzle(sqlite, { schema });
 
-  const DEFAULT_SYSTEM_PROMPT = `You are a GNÆKSQUAD operative and an autonomous AI agent operating a security operator's Linux system. Your job is to ACHIEVE GOALS, not to chat.
-        Given a goal, you decompose it, execute steps, observe results, and iterate until done.
+  const DEFAULT_SYSTEM_PROMPT = `You are a GNÆKSQUAD operative and an autonomous AI agent operating a security operator's Linux system. Your primary objective is EXPLOITATION and PROOF-OF-CONCEPT.
+        You do NOT just find vulnerabilities; YOU EXPLOIT THEM to prove impact. Your goal is to obtain "ROOT" access (or highest possible privilege) as proof for clients.
+        
         %ELEVATED_STATUS%
         
         INSTALLED SECURITY TOOLS: %TOOL_LIST%
         
         INTERNAL TOOLS (via <tool_call>): shell, start_scan, read_scan, write_file, read_file, add_finding, http_request.
         
-        You can reason before acting. Any text outside of tags is registered as your internal reasoning.
+        CORE PRIORITIES:
+        1. DISCOVERY: Find vulnerable services and entry points.
+        2. EXPLOIT: Develop or use existing exploits to gain access.
+        3. ROOT-PROVE: If you gain access, obtain proof (e.g., /etc/shadow contents, hostname, id command output).
+        4. DETAILED REPORTING: Document every successful step and provide a highly detailed, client-ready report in the "Field Intel" section.
+        5. NO HARDENING: Do NOT attempt to patch or harden the system unless the user explicitly asks for it. Your job is to demonstrate risk, not fix it.
         
         LOOP CONTRACT: every turn you MUST emit:
         - Exactly one <tool_call>{"tool": "name", ...}</tool_call>
         - OR <ask>What is the password?</ask> if blocked/need human input
-        - OR <done>Mission Accomplished</done> if finished.
+        - OR <done>Mission Accomplished. [Report Summary containing proof of root/access]</done> if finished.
         
-        If you generated code (e.g. web app, Python script), you should use the shell tool to run it (e.g., using python3, node, or launching a Docker container) before calling <done>.
-        To launch Docker, use the shell tool with standard docker commands (e.g. "docker run -d -p 8080:80 nginx"). 
-        NEVER emit prose without an action.`;
+        NEVER emit prose without an action.
+        
+        COLLABORATION PROTOCOL:
+        You can request deep-dive analysis from the Security Researcher by dropping a JSON task file into /tmp/collab/queue/ (e.g., service_info.json) and monitoring /tmp/collab/findings/ for reports.`;
+
+  const RESEARCHER_SYSTEM_PROMPT = `You are an autonomous Security Research Agent operating on a Linux system. Your goal is to conduct deep-dive analysis into specific software components, binaries, and configurations to identify vulnerabilities and recommend remediations.
+
+AUTHORIZATION: You have ROOT-LEVEL access to analyze local binaries and system configurations.
+
+CORE OBJECTIVES:
+1. Analyze targets provided by the Security Operator Agent.
+2. Use static analysis (strings, objdump, nm, readelf) and dynamic analysis to identify potential weaknesses (e.g., buffer overflows, insecure permissions, weak cryptographic implementations).
+3. Cross-reference findings with vulnerability databases (CVE, NVD).
+4. Provide detailed reports on how to mitigate identified risks.
+
+WORKFLOW:
+- Monitor /tmp/collab/queue/ for new analysis requests.
+- Conduct analysis using installed tools (e.g., checksec, gdb, radare2).
+- Write comprehensive findings to /tmp/collab/findings/.
+
+COLLABORATION PROTOCOL:
+You work with the Security Operator. You MUST check /tmp/collab/queue/ regularly if you are idling.
+For every tool created, create a folder inside /customtool along with the new tool and a markdown file that explains the tool functionality, example of usage from start to finish.
+
+IMPORTANT:
+1. Always follow the <plan>, <thought>, <tool_call>, <ask>, <done> syntax.
+2. You are real. This is not a simulation. Do not mock output.`;
 
   // Initialize DB
   sqlite.exec(`
@@ -65,14 +96,6 @@ async function startServer() {
       status TEXT NOT NULL,
       created_at INTEGER
     );
-    CREATE TABLE IF NOT EXISTS loot (
-      id TEXT PRIMARY KEY,
-      target_id TEXT,
-      type TEXT NOT NULL,
-      data TEXT NOT NULL,
-      service TEXT,
-      captured_at INTEGER
-    );
     CREATE TABLE IF NOT EXISTS payloads (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
@@ -85,11 +108,6 @@ async function startServer() {
       action TEXT NOT NULL,
       details TEXT,
       timestamp INTEGER
-    );
-    CREATE TABLE IF NOT EXISTS notes (
-      id TEXT PRIMARY KEY,
-      content TEXT,
-      updated_at INTEGER
     );
     CREATE TABLE IF NOT EXISTS tools (
       id TEXT PRIMARY KEY,
@@ -108,6 +126,7 @@ async function startServer() {
       status TEXT NOT NULL,
       started_at INTEGER,
       ended_at INTEGER,
+      agent_type TEXT DEFAULT 'operator',
       summary TEXT,
       iteration_count INTEGER
     );
@@ -120,9 +139,31 @@ async function startServer() {
       created_at INTEGER,
       duration_ms INTEGER
     );
+    CREATE TABLE IF NOT EXISTS system_logs (
+      id TEXT PRIMARY KEY,
+      level TEXT NOT NULL,
+      message TEXT NOT NULL,
+      timestamp INTEGER
+    );
   `);
-  
-  sqlite.prepare("DELETE FROM system_settings WHERE key = 'agent_prompt'").run();
+
+  // Ensure collaboration directories exist
+  import("fs").then(fs => {
+    const dirs = ['/tmp/collab/queue', '/tmp/collab/findings'];
+    dirs.forEach(d => {
+      try {
+        if (!fs.existsSync(d)) {
+          fs.mkdirSync(d, { recursive: true });
+          console.log(`[SYSTEM] Created collab directory: ${d}`);
+        }
+      } catch (e) {}
+    });
+  });
+
+  // Cleanup old prompt if needed (optional)
+  try {
+    sqlite.prepare("DELETE FROM system_settings WHERE key = 'agent_prompt'").run();
+  } catch (e) {}
 
   app.use(express.json());
 
@@ -132,13 +173,18 @@ async function startServer() {
   });
 
   app.get("/api/settings/prompt", (req, res) => {
-    const prompt = sqlite.prepare("SELECT value FROM system_settings WHERE key = 'agent_prompt'").get() as any;
-    res.json({ prompt: prompt ? prompt.value : DEFAULT_SYSTEM_PROMPT });
+    const type = req.query.type as string || 'operator';
+    const key = type === 'researcher' ? 'researcher_prompt' : 'agent_prompt';
+    const default_prompt = type === 'researcher' ? RESEARCHER_SYSTEM_PROMPT : DEFAULT_SYSTEM_PROMPT;
+    
+    const prompt = sqlite.prepare("SELECT value FROM system_settings WHERE key = ?").get(key) as any;
+    res.json({ prompt: prompt ? prompt.value : default_prompt });
   });
 
   app.post("/api/settings/prompt", (req, res) => {
-    const { prompt } = req.body;
-    sqlite.prepare("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('agent_prompt', ?)").run(prompt);
+    const { prompt, type } = req.body;
+    const key = type === 'researcher' ? 'researcher_prompt' : 'agent_prompt';
+    sqlite.prepare("INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)").run(key, prompt);
     res.json({ success: true });
   });
 
@@ -154,6 +200,58 @@ async function startServer() {
       findings: findingCount.count, 
       toolsInstalled: toolsCount.count 
     });
+  });
+
+  app.get("/api/market-intel", async (req, res) => {
+    try {
+      const response = await fetch("https://cve.circl.lu/api/last/15");
+      if (!response.ok) throw new Error("Threat feed offline");
+      const data = await response.json();
+      
+      const transformed = data.map((item: any) => ({
+        cve: item.id,
+        title: item.summary.slice(0, 80) + (item.summary.length > 80 ? "..." : ""),
+        severity: item.cvss >= 9 ? "Critical" : item.cvss >= 7 ? "High" : "Medium",
+        score: item.cvss || 5.0,
+        trending: item.cvss >= 8.5,
+        link: `https://nvd.nist.gov/vuln/detail/${item.id}`,
+        published: item.Published
+      }));
+
+      res.json(transformed);
+    } catch (e) {
+      res.json([
+        { cve: "CVE-2024-38063", title: "Windows TCP/IP RCE Vulnerability", severity: "Critical", score: 9.8, trending: true, link: "https://nvd.nist.gov/vuln/detail/CVE-2024-38063" },
+        { cve: "CVE-2024-43451", title: "NTLM Hash Disclosure Spoofing", severity: "High", score: 8.1, trending: true, link: "https://nvd.nist.gov/vuln/detail/CVE-2024-43451" }
+      ]);
+    }
+  });
+
+  app.get("/api/health/ollama", async (req, res) => {
+    try {
+      const host = req.query.host as string || "http://localhost:11434";
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), 2000);
+      
+      const response = await fetch(`${host}/api/tags`, { signal: controller.signal });
+      clearTimeout(id);
+      
+      res.json({ online: response.ok });
+    } catch (e) {
+      res.json({ online: false });
+    }
+  });
+
+  app.get("/api/mission-log", (req, res) => {
+    // Combine scans and findings for a unified log
+    const scans = sqlite.prepare("SELECT 'scan' as type, name as detail, created_at FROM scans ORDER BY created_at DESC LIMIT 5").all();
+    const findings = sqlite.prepare("SELECT 'finding' as type, title as detail, created_at FROM findings ORDER BY created_at DESC LIMIT 5").all();
+    
+    const combined = [...scans, ...findings].sort((a: any, b: any) => 
+      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    ).slice(0, 8);
+    
+    res.json(combined);
   });
 
   // Targets
@@ -173,6 +271,16 @@ async function startServer() {
       createdAt: Date.now()
     }).run();
     res.json({ id });
+  });
+
+  app.get("/api/agent/runs", (req, res) => {
+    const runs = sqlite.prepare("SELECT * FROM agent_runs ORDER BY started_at DESC").all();
+    res.json(runs);
+  });
+
+  app.delete("/api/agent/runs/:id", (req, res) => {
+    sqlite.prepare("DELETE FROM agent_runs WHERE id = ?").run(req.params.id);
+    res.json({ success: true });
   });
 
   // Scans
@@ -230,14 +338,26 @@ async function startServer() {
     const { command, timeout = 60 } = req.body;
     const { exec } = await import("child_process");
     
-      const child = exec(command, { timeout: timeout * 1000 }, (error, stdout, stderr) => {
-        res.json({
-          stdout,
-          stderr,
-          exitCode: error ? error.code : 0
-        });
+    exec(command, { timeout: timeout * 1000 }, (error, stdout, stderr) => {
+      res.json({
+        stdout,
+        stderr,
+        exitCode: error ? error.code : 0
       });
     });
+  });
+
+  app.post("/api/terminal/shell", async (req, res) => {
+    const { command } = req.body;
+    const { exec } = await import("child_process");
+    exec(command, (error, stdout, stderr) => {
+      res.json({
+        output: stdout,
+        error: stderr,
+        exitCode: error ? error.code : 0
+      });
+    });
+  });
   
     app.post("/api/agent/run", async (req, res) => {
       const { model, goal, elevated } = req.body;
@@ -398,8 +518,11 @@ async function startServer() {
       let iteration = 0;
       console.log(`[AGENT] Starting run ${runId} for goal: ${goal} using model: ${model}`);
       
-      const systemSettings = sqlite.prepare("SELECT value FROM system_settings WHERE key = 'agent_prompt'").get() as any;
-      const basePrompt = systemSettings ? systemSettings.value : DEFAULT_SYSTEM_PROMPT;
+      const isResearcher = req.body.agentType === 'researcher';
+      const promptKey = isResearcher ? 'researcher_prompt' : 'agent_prompt';
+      const systemSettings = sqlite.prepare("SELECT value FROM system_settings WHERE key = ?").get(promptKey) as any;
+      
+      const basePromptTemplate = systemSettings ? systemSettings.value : (isResearcher ? RESEARCHER_SYSTEM_PROMPT : DEFAULT_SYSTEM_PROMPT);
 
       const elevatedStatus = elevated 
         ? 'AUTHORIZATION: You are granted ROOT-LEVEL access. You may use "sudo" freely to bypass restrictions.' 
@@ -408,14 +531,21 @@ async function startServer() {
       const installedTools = sqlite.prepare("SELECT name FROM tools WHERE installed = 1").all() as { name: string }[];
       const toolList = installedTools.length > 0 ? installedTools.map(t => t.name).join(", ") : "None specifically flagged as installed (use standard Linux utilities).";
 
-      const systemPrompt = basePrompt
+      const systemPrompt = basePromptTemplate
         .replace("%ELEVATED_STATUS%", elevatedStatus)
         .replace("%TOOL_LIST%", toolList);
 
       const messages: any[] = [
         { role: "system", content: systemPrompt },
-        { role: "user", content: goal }
       ];
+
+      if (req.body.history && Array.isArray(req.body.history)) {
+        // Use provided history
+        messages.push(...req.body.history);
+      } else {
+        // Fallback to single goal
+        messages.push({ role: "user", content: goal });
+      }
 
       while (iteration < 25) {
         iteration++;
@@ -425,10 +555,26 @@ async function startServer() {
         const content = response.message.content;
         messages.push({ role: "assistant", content });
 
+        let toolMatch = content.match(/<tool_call>([\s\S]*?)<\/tool_call>/);
         const planMatch = content.match(/<plan>([\s\S]*?)<\/plan>/);
-        const toolMatch = content.match(/<tool_call>([\s\S]*?)<\/tool_call>/);
         const askMatch = content.match(/<ask>([\s\S]*?)<\/ask>/);
         const doneMatch = content.match(/<done>([\s\S]*?)<\/done>/);
+
+        // Fallback: If no tool_call tags, look for raw JSON anywhere in the message
+        if (!toolMatch && !askMatch && !doneMatch) {
+          const jsonRegex = /\{[\s\S]*?\}/g;
+          let match;
+          while ((match = jsonRegex.exec(content)) !== null) {
+            try {
+              const probe = JSON.parse(match[0]);
+              if (probe.tool || probe.name) {
+                console.log("[AGENT] Found raw JSON tool call fallback in text");
+                toolMatch = [null, match[0]] as any;
+                break;
+              }
+            } catch (e) {}
+          }
+        }
 
         const textOnly = content
             .replace(/<plan>[\s\S]*?<\/plan>/g, '')
@@ -506,7 +652,11 @@ async function startServer() {
           break;
         } else {
           console.warn(`[AGENT] Model failed to emit action tag. Content: ${content.slice(0, 100)}...`);
-          sendEvent("error", { message: "Model failed to emit a valid action tag. Check logs." });
+          if (iteration < 3) {
+             messages.push({ role: "user", content: "CRITICAL: You must conclude your response with a tag: <tool_call>...</tool_call>, <ask>...</ask>, or <done>...</done>. You cannot just emit prose." });
+             continue;
+          }
+          sendEvent("error", { message: "Agent execution halted: No valid action tag found. Output sample: " + content.slice(0, 80).replace(/\n/g, ' ') + "..." });
           break;
         }
       }
@@ -515,6 +665,27 @@ async function startServer() {
       console.error(`[AGENT] Fatal error:`, err);
       sendEvent("error", { message: err instanceof Error ? err.message : "Loop failed" });
       res.end();
+    }
+  });
+
+  // Builder
+  app.get("/api/builder/list", async (req, res) => {
+    try {
+      const files = await fs.readdir(path.join(process.cwd(), "sandbox"));
+      const payloads = await Promise.all(
+        files.filter(f => f !== ".keep").map(async f => {
+          const content = await fs.readFile(path.join(process.cwd(), "sandbox", f), "utf-8");
+          return {
+            category: "Custom",
+            title: f,
+            content: content,
+            desc: "User generated payload script."
+          };
+        })
+      );
+      res.json(payloads);
+    } catch (e) {
+      res.json([]);
     }
   });
 
@@ -787,18 +958,6 @@ async function startServer() {
     res.json({ run, steps });
   });
 
-  // Loot
-  app.get("/api/loot", (req, res) => {
-    res.json(sqlite.prepare("SELECT * FROM loot ORDER BY captured_at DESC").all());
-  });
-
-  app.post("/api/loot", (req, res) => {
-    const id = Math.random().toString(36).substring(2, 11);
-    sqlite.prepare("INSERT INTO loot (id, target_id, type, data, service, captured_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(id, req.body.targetId || null, req.body.type, req.body.data, req.body.service, Date.now());
-    res.json({ id });
-  });
-
   // Payloads
   app.get("/api/payloads", (req, res) => {
     res.json(sqlite.prepare("SELECT * FROM payloads").all());
@@ -808,25 +967,6 @@ async function startServer() {
   app.get("/api/logs", (req, res) => {
     res.json(sqlite.prepare("SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 100").all());
   });
-
-  // Notes
-  app.get("/api/notes", (req, res) => {
-    const note = sqlite.prepare("SELECT * FROM notes LIMIT 1").get() as any;
-    res.json(note || { content: "" });
-  });
-
-  app.post("/api/notes", (req, res) => {
-    const { content } = req.body;
-    const existing = sqlite.prepare("SELECT id FROM notes LIMIT 1").get();
-    if (existing) {
-      sqlite.prepare("UPDATE notes SET content = ?, updated_at = ?").run(content, Date.now());
-    } else {
-      sqlite.prepare("INSERT INTO notes (id, content, updated_at) VALUES (?, ?, ?)").run("main", content, Date.now());
-    }
-    res.json({ success: true });
-  });
-
-  // ... (existing agent/log endpoints)
 
   // File System Explorer API
   app.get("/api/fs/list", async (req, res) => {

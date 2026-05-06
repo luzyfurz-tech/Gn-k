@@ -5,24 +5,14 @@
 
 import { Link, Route, Switch, useRoute } from 'wouter';
 import React from 'react';
-import { LayoutDashboard, Target, Zap, Bug, Wrench, Terminal, Bot, Code, Settings as SettingsIcon, AlertTriangle, Share2, Database, Zap as PayloadIcon, FileText, Activity, StickyNote, ChevronDown, ChevronRight, Shield, Sword, Search, BookOpen, Folder } from 'lucide-react';
-import Filesystem from './pages/FileSystem';
+import { LayoutDashboard, Target, Zap, Bug, Terminal, Bot, Settings as SettingsIcon, AlertTriangle, ChevronDown, ChevronRight, Shield, Search, Zap as PayloadIcon } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import Dashboard from './pages/Dashboard';
 import Settings from './pages/Settings';
-import Targets from './pages/Targets';
-import Scans from './pages/Scans';
-import Findings from './pages/Findings';
-import Tools from './pages/Tools';
-import TerminalPage from './pages/Terminal';
-import Agent from './pages/Agent';
-import Builder from './pages/Builder';
-import NetworkMap from './pages/NetworkMap';
-import Loot from './pages/Loot';
-import Payloads from './pages/Payloads';
-import Reports from './pages/Reports';
-import Logs from './pages/Logs';
-import Scratchpad from './pages/Scratchpad';
+import AgentControl from './pages/AgentControl';
+import Exploit from './pages/Exploit';
+import Console from './pages/Console';
+import Intel from './pages/Intel';
 import LoadingScreen from './components/LoadingScreen';
 
 const NavLink = ({ href, children, icon: Icon }: { href: string, children: React.ReactNode, icon: any }) => {
@@ -88,55 +78,23 @@ export default function App() {
           </Link>
           
           <div className="space-y-6">
-            <NavSection title="Mission" icon={Shield}>
-              <NavLink href="/" icon={Bot}>AI Operator</NavLink>
+            <NavSection title="Control Center" icon={Shield}>
               <NavLink href="/dashboard" icon={LayoutDashboard}>Overview</NavLink>
-              <NavLink href="/network" icon={Share2}>Topology</NavLink>
-              <NavLink href="/targets" icon={Target}>Scope</NavLink>
-              <NavLink href="/scans" icon={Zap}>Operations</NavLink>
-              <NavLink href="/findings" icon={Bug}>Findings</NavLink>
-            </NavSection>
-
-            <NavSection title="Workbench" icon={Terminal}>
-              <NavLink href="/terminal" icon={Terminal}>CLI Console</NavLink>
-              <NavLink href="/builder" icon={Code}>Payload Gen</NavLink>
-              <NavLink href="/filesystem" icon={Folder}>Filesystem</NavLink>
-              <NavLink href="/scratchpad" icon={StickyNote}>Notes</NavLink>
-            </NavSection>
-
-            <NavSection title="Arsenal" icon={Sword}>
-              <NavLink href="/payloads" icon={PayloadIcon}>Payload Stash</NavLink>
-              <NavLink href="/tools" icon={Wrench}>Toolbag</NavLink>
-              <NavLink href="/loot" icon={Database}>Loot Vault</NavLink>
-            </NavSection>
-
-            <NavSection title="Intelligence" icon={BookOpen}>
-              <NavLink href="/reports" icon={FileText}>Reports</NavLink>
-              <NavLink href="/logs" icon={Activity}>Audit Trail</NavLink>
-            </NavSection>
-
-            <NavSection title="System" icon={SettingsIcon} defaultOpen={false}>
-              <NavLink href="/settings" icon={SettingsIcon}>General</NavLink>
+              <NavLink href="/" icon={Bot}>Agent Control</NavLink>
+              <NavLink href="/exploit" icon={PayloadIcon}>Exploit</NavLink>
+              <NavLink href="/intel" icon={Search}>Intel</NavLink>
+              <NavLink href="/console" icon={Terminal}>Console</NavLink>
+              <NavLink href="/settings" icon={SettingsIcon}>Settings</NavLink>
             </NavSection>
           </div>
         </nav>
         <main className="flex-1 p-6 overflow-y-auto bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]">
           <Switch>
-            <Route path="/"><Agent /></Route>
+            <Route path="/"><AgentControl /></Route>
             <Route path="/dashboard"><Dashboard /></Route>
-            <Route path="/network"><NetworkMap /></Route>
-            <Route path="/targets"><Targets /></Route>
-            <Route path="/scans"><Scans /></Route>
-            <Route path="/findings"><Findings /></Route>
-            <Route path="/loot"><Loot /></Route>
-            <Route path="/payloads"><Payloads /></Route>
-            <Route path="/tools"><Tools /></Route>
-            <Route path="/reports"><Reports /></Route>
-            <Route path="/logs"><Logs /></Route>
-            <Route path="/terminal"><TerminalPage /></Route>
-            <Route path="/builder"><Builder /></Route>
-            <Route path="/filesystem"><Filesystem /></Route>
-            <Route path="/scratchpad"><Scratchpad /></Route>
+            <Route path="/intel"><Intel /></Route>
+            <Route path="/exploit"><Exploit /></Route>
+            <Route path="/console"><Console /></Route>
             <Route path="/settings"><Settings /></Route>
           </Switch>
         </main>

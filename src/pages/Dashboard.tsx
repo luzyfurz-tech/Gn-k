@@ -4,17 +4,39 @@ import { motion, AnimatePresence } from "motion/react";
 
 export default function Dashboard() {
   const [stats, setStats] = useState({ targets: 0, scans: 0, findings: 0, toolsInstalled: 0 });
+  const [marketData, setMarketData] = useState<any[]>([]);
 
   useEffect(() => {
-    const fetchStats = () => {
-      fetch("/api/stats")
-        .then(res => res.json())
-        .then(setStats)
-        .catch(() => {});
+    const fetchStats = async () => {
+      try {
+        const res = await fetch("/api/stats");
+        if (res.ok) {
+          const data = await res.json();
+          setStats(data);
+        }
+      } catch (e) {
+        console.error("Dashboard stats fetch error", e);
+      }
+    };
+
+    const fetchMarketIntel = async () => {
+      try {
+        const res = await fetch("/api/market-intel");
+        if (res.ok) {
+          const data = await res.json();
+          setMarketData(data);
+        }
+      } catch (e) {
+        console.error("Market intel fetch error", e);
+      }
     };
 
     fetchStats();
-    const interval = setInterval(fetchStats, 5000);
+    fetchMarketIntel();
+    const interval = setInterval(() => {
+      fetchStats();
+      fetchMarketIntel();
+    }, 86400000); // 24h refresh
     return () => clearInterval(interval);
   }, []);
 
@@ -35,10 +57,10 @@ export default function Dashboard() {
                 <TrendingUp size={16} className="text-orange-500" />
                 <h2 className="text-sm font-black uppercase tracking-[0.2em] text-green-400">Market Intelligence Feed</h2>
              </div>
-             <div className="text-[10px] text-green-800 font-mono italic">"Aggregated from 12+ darknet and security clearinghouses"</div>
+             <div className="text-[10px] text-green-800 font-mono italic">"Aggregated live from global security clearinghouses"</div>
           </div>
           <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-             <TrendingExploits />
+             <TrendingExploits exploits={marketData} />
           </div>
         </div>
       </div>
@@ -70,39 +92,68 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="border border-green-900 bg-black/40 p-4 rounded-lg">
-          <h2 className="text-sm font-black uppercase tracking-[0.2em] mb-4 flex items-center gap-2 text-green-400 border-b border-green-900/50 pb-2">
-            <Activity size={16} className="text-blue-500" /> System Core
-          </h2>
-          <div className="space-y-4">
-            <HealthBar label="CPU Core Load" value={12} />
-            <HealthBar label="Memory Reserved" value={45} />
-            <HealthBar label="V-Disk Array" value={68} />
-          </div>
+        <div className="border border-green-900 bg-black/40 p-4 rounded-lg flex flex-col justify-center items-center text-center">
+           <div className="text-[10px] text-green-700 uppercase font-bold tracking-widest mb-4 flex items-center gap-2">
+             Global Cyber Threat Index
+             <div className={`w-2 h-2 rounded-full ${isOllamaOnline ? 'bg-green-500 shadow-[0_0_8px_#22c55e]' : 'bg-red-500 shadow-[0_0_8px_#ef4444]'} animate-pulse`} title={isOllamaOnline ? "Ollama Node Online" : "Ollama Node Offline"} />
+           </div>
+           <ThreatIndex exploits={marketData} />
+           <p className="text-[10px] text-green-900 italic mt-4 max-w-xs uppercase">Calculated based on real-time CVE delta and severity distribution across active feeds.</p>
+        </div>
+      </div>
+
+      {/* Mission Log Section */}
+      <div className="mt-8 border border-green-900/30 bg-black/20 rounded-lg p-6">
+        <div className="flex items-center justify-between mb-4 border-b border-green-900/30 pb-2">
+          <h3 className="text-xs font-black uppercase tracking-[0.3em] text-green-400 flex items-center gap-2">
+            <Activity size={14} className="text-blue-400" /> Operational Mission Log
+          </h3>
+          <span className="text-[9px] font-mono text-green-800 uppercase">Real-time persistence layer active</span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {missionLog.length > 0 ? missionLog.map((log, i) => (
+            <motion.div 
+              key={i}
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: i * 0.05 }}
+              className="flex items-start gap-3 p-3 border border-green-900/10 bg-black/40 rounded hover:bg-green-900/5 transition-colors"
+            >
+              <div className={`mt-1 p-1 rounded ${log.type === 'finding' ? 'bg-red-500/10 text-red-500' : 'bg-blue-500/10 text-blue-500'}`}>
+                {log.type === 'finding' ? <ShieldAlert size={10} /> : <Scan size={10} />}
+              </div>
+              <div className="min-w-0">
+                <div className="text-[10px] font-bold text-green-200 truncate uppercase tracking-tight">{log.detail}</div>
+                <div className="text-[8px] text-green-800 font-mono mt-1">{new Date(log.created_at).toLocaleString()}</div>
+              </div>
+            </motion.div>
+          )) : (
+            <div className="col-span-full py-4 text-center text-[10px] text-green-900 uppercase italic">-- No recent missions recorded --</div>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-function TrendingExploits() {
-  const exploits = [
-    { cve: "CVE-2024-38063", title: "Windows TCP/IP RCE", severity: "Critical", score: 9.8, trending: true, link: "https://nvd.nist.gov/vuln/detail/CVE-2024-38063" },
-    { cve: "CVE-2024-43451", title: "NTLM Hash Disclosure", severity: "High", score: 8.1, trending: true, link: "https://nvd.nist.gov/vuln/detail/CVE-2024-43451" },
-    { cve: "CVE-2024-38112", title: "Windows MHTML Spoofing", severity: "Medium", score: 6.5, trending: false, link: "https://nvd.nist.gov/vuln/detail/CVE-2024-38112" },
-    { cve: "CVE-2024-38077", title: "Windows RDL RCE", severity: "Critical", score: 9.8, trending: true, link: "https://nvd.nist.gov/vuln/detail/CVE-2024-38077" },
-    { cve: "CVE-2024-21413", title: "Outlook RCE (MonikerLink)", severity: "Critical", score: 9.8, trending: false, link: "https://nvd.nist.gov/vuln/detail/CVE-2024-21413" },
-    { cve: "CVE-2023-38831", title: "WinRAR Arbitrary Code", severity: "High", score: 7.8, trending: false, link: "https://nvd.nist.gov/vuln/detail/CVE-2023-38831" },
-  ];
+function TrendingExploits({ exploits }: { exploits: any[] }) {
+  if (!exploits || exploits.length === 0) {
+    return (
+      <div className="col-span-full py-12 flex flex-col items-center justify-center space-y-3 opacity-50">
+        <Activity size={32} className="animate-pulse text-green-500" />
+        <span className="text-[10px] font-mono uppercase tracking-[0.3em]">Synching with primary feed...</span>
+      </div>
+    );
+  }
 
   return (
     <>
       {exploits.map((e, i) => (
         <motion.div 
-          key={e.cve}
+          key={e.cve + i}
           initial={{ y: 20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          transition={{ delay: i * 0.1 }}
+          transition={{ delay: i * 0.05 }}
           className="bg-black/60 border border-green-900/30 p-4 rounded hover:border-green-500/50 transition-all group relative overflow-hidden"
         >
           <div className="flex justify-between items-start mb-2">
@@ -115,7 +166,7 @@ function TrendingExploits() {
               {e.severity}
             </span>
           </div>
-          <h4 className="text-xs font-bold text-green-100 group-hover:text-green-400 transition-colors uppercase tracking-tight mb-3">{e.title}</h4>
+          <h4 className="text-xs font-bold text-green-100 group-hover:text-green-400 transition-colors uppercase tracking-tight mb-3 line-clamp-2 min-h-[32px]">{e.title}</h4>
           
           <div className="flex justify-between items-end">
             <div className="space-y-1">
@@ -127,7 +178,7 @@ function TrendingExploits() {
               </div>
               {e.trending && (
                <div className="flex items-center gap-1 text-[8px] text-red-500 font-bold uppercase">
-                 <TrendingUp size={8} /> Trending Threat
+                 <TrendingUp size={8} /> Elevated Threat
                </div>
               )}
             </div>
@@ -147,6 +198,32 @@ function TrendingExploits() {
   );
 }
 
+function ThreatIndex({ exploits }: { exploits: any[] }) {
+  const avgScore = exploits.length > 0 ? exploits.reduce((acc, curr) => acc + curr.score, 0) / exploits.length : 0;
+  const threatLevel = avgScore > 8 ? "Extreme" : avgScore > 7 ? "High" : avgScore > 5 ? "Elevated" : "Moderate";
+  const levels = ["Extreme", "High", "Elevated", "Moderate"];
+  const colors = ["text-red-500", "text-orange-500", "text-yellow-500", "text-blue-500"];
+  
+  return (
+    <div className="flex flex-col items-center">
+      <div className={`text-6xl font-black mb-2 tabular-nums ${colors[levels.indexOf(threatLevel)]}`}>
+        {avgScore.toFixed(1)}
+      </div>
+      <div className={`text-sm font-black uppercase tracking-[0.4em] ${colors[levels.indexOf(threatLevel)]}`}>
+        {threatLevel}
+      </div>
+      <div className="flex gap-1 mt-4">
+        {[...Array(10)].map((_, i) => (
+          <div 
+            key={i} 
+            className={`w-3 h-1 rounded-full ${i < avgScore ? colors[levels.indexOf(threatLevel)].replace('text', 'bg') : 'bg-green-900/20'}`} 
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function StatCard({ title, value, icon: Icon, color = "text-green-400" }: any) {
   return (
     <div className="border border-green-900 bg-black/40 p-4 rounded-lg relative overflow-hidden group">
@@ -159,30 +236,6 @@ function StatCard({ title, value, icon: Icon, color = "text-green-400" }: any) {
           <p className="text-2xl font-black mt-1 text-green-100 tabular-nums">{value}</p>
         </div>
         <Icon size={20} className={color} />
-      </div>
-    </div>
-  );
-}
-
-function HealthBar({ label, value }: { label: string, value: number }) {
-  const getColor = (v: number) => {
-    if (v > 80) return "bg-red-500";
-    if (v > 50) return "bg-yellow-500";
-    return "bg-green-500";
-  };
-
-  return (
-    <div>
-      <div className="flex justify-between text-[10px] mb-1 uppercase font-bold text-green-700 tracking-wider">
-        <span>{label}</span>
-        <span className="font-mono">{value}%</span>
-      </div>
-      <div className="h-2 bg-green-900/20 rounded-sm overflow-hidden border border-green-900/30">
-        <motion.div 
-          initial={{ width: 0 }}
-          animate={{ width: `${value}%` }}
-          className={`h-full ${getColor(value)} shadow-[0_0_10px_rgba(34,197,94,0.3)]`} 
-        />
       </div>
     </div>
   );

@@ -11,16 +11,6 @@ export default function ModelSelector({ type, onSelect }: { type: 'agent' | 'bui
   const [selectedModel, setSelectedModel] = useState(localStorage.getItem(`${type}_model`) || localStorage.getItem("default_model") || "");
 
   const fetchModels = async () => {
-    if (provider === "gemini") {
-        setModels([
-            { name: "gemini-2.0-flash" },
-            { name: "gemini-1.5-pro" },
-            { name: "gemini-1.5-flash" }
-        ]);
-        if (!selectedModel) handleSelect("gemini-1.5-flash");
-        return;
-    }
-
     if (!apiKey) return;
     setLoading(true);
     setError("");
@@ -64,7 +54,7 @@ export default function ModelSelector({ type, onSelect }: { type: 'agent' | 'bui
     if (onSelect) onSelect(val);
   };
 
-  if (provider === "ollama" && !apiKey) {
+  if (!apiKey) {
     return (
       <div className="bg-black border border-green-900 p-2 rounded text-xs text-green-700 flex items-center justify-center italic">
         -- set API key in Settings --
@@ -95,7 +85,7 @@ export default function ModelSelector({ type, onSelect }: { type: 'agent' | 'bui
       >
         <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
       </button>
-      {error && <AlertCircle size={14} className="text-red-500" title={error} />}
+      {error && <AlertCircle size={14} className="text-red-500" />}
     </div>
   );
 }

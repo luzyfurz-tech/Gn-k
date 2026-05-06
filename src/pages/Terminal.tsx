@@ -43,7 +43,7 @@ export default function Terminal() {
       term.write(' |  _ \\  __ _ ___  | __ ) _   _ _ __ | | _____ _ __ \r\n');
       term.write(' | | | |/ _` / __| |  _ \\| | | | \'_ \\| |/ / _ \\ \'__|\r\n');
       term.write(' | |_| | (_| \\__ \\ | |_) | |_| | | | |   <  __/ |   \r\n');
-      term.write(' |____/ \\__,_|___/ |____/ \\__,_|_| |_|_|\\_\\___|_|   \r\n\x1b[0m\r\n');
+      term.write(' |____/ \\__,_|___/ |____/ \\__,_|_| |_|_|\\_\\___|_|   \r\n\x1b[0m');
       term.write('\x1b[38;5;46m[+] SYSTEM BOOT SEQUENCE INITIATED...\r\n');
       term.write('[+] ALLOCATING MEMORY SECTORS....................... [ OK ]\r\n');
       term.write('[+] BYPASSING MAINFRAME FIREWALL.................... [ OK ]\r\n');
